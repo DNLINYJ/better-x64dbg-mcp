@@ -23,9 +23,11 @@ constexpr auto SETTINGS_KEY_PORT = "Port";
 constexpr auto SETTINGS_KEY_AUTOSTART = "AutoStart";
 
 struct s_plugin_settings {
-    char host[64] = "127.0.0.1";
-    uint16_t port = 27042;
+    char host[64]{};
+    uint16_t port = DEFAULT_PORT;
     bool auto_start = true;
+
+    s_plugin_settings() { strncpy_s(host, DEFAULT_HOST, _TRUNCATE); }
 };
 
 // Menu entries
