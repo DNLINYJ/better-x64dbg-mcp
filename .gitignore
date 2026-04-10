@@ -362,4 +362,8 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 
+# Project-local docs (not shipped)
+DISCUSSION_SUMMARY.md
+CLAUDE.md
+
 CLAUDE.md
