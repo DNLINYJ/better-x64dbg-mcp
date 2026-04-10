@@ -365,3 +365,17 @@ FodyWeavers.xsd
 # Project-local docs (not shipped)
 DISCUSSION_SUMMARY.md
 CLAUDE.md
+
+# Reference project (local analysis only, not shipped)
+reference/
+
+# Build output
+build/
+*.dp32
+*.dp64
+
+# VS intermediate build directories (MSBuild ProjectGuid-based)
+better-x.*/
+
+# Visual Studio Code workspace settings
+.vscode/*
