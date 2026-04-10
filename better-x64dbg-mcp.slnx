@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="better-x64dbg-mcp.vcxproj" Id="c96686d1-c0ad-4381-95b0-339bbe5b02b6" />
+</Solution>
