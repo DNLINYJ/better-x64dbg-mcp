@@ -5,6 +5,8 @@
 #include <atomic>
 #include <expected>
 #include <cstdint>
+#include <mutex>
+#include <condition_variable>
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -33,6 +35,8 @@ public:
 private:
     static constexpr size_t MAX_REQUEST_SIZE = 1024 * 1024;
     static constexpr int RECV_TIMEOUT_MS = 5000;
+    static constexpr int MAX_CONNECTIONS = 64;
+    static constexpr int SHUTDOWN_DRAIN_TIMEOUT_MS = 10000;
 
     SOCKET m_listen_socket = INVALID_SOCKET;
     std::atomic<bool> m_running{false};
@@ -40,6 +44,11 @@ private:
     c_mcp_dispatcher* m_dispatcher = nullptr;
     c_mcp_session* m_session_mgr = nullptr;
     uint16_t m_port = 0;
+
+    // Connection tracking for graceful shutdown
+    std::atomic<int> m_active_connections{0};
+    std::mutex m_conn_mutex;
+    std::condition_variable m_conn_cv;
 
     void listener_loop();
     void handle_connection(SOCKET client_socket);

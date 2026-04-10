@@ -72,8 +72,8 @@ nlohmann::json page_info(const std::string& address_str) {
 nlohmann::json allocate(const std::string& size) {
     auto& bridge = get_bridge();
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
-    bridge.exec_command("alloc " + size);
-    auto result = bridge.eval_expression("$result");
+    // Atomically exec + eval to prevent concurrent requests from racing on $result
+    auto result = bridge.exec_command_and_eval("alloc " + size, "$result");
     if (result == 0) throw std::runtime_error("Memory allocation failed");
     return {{"address", format_utils::format_address(result)}, {"size", size}};
 }

@@ -49,50 +49,31 @@ void c_mcp_session::unregister_sse(const std::string& session_id) {
 }
 
 void c_mcp_session::broadcast_event(const nlohmann::json& notification) {
-    // Snapshot sockets under lock, then send outside lock to avoid blocking
-    // other threads during potentially slow network I/O.
-    std::vector<std::pair<std::string, SOCKET>> targets;
+    // Hold lock during sends to prevent TOCTOU race: without this, a socket handle
+    // could be closed by unregister_sse() and reused by the OS for a different socket
+    // between the snapshot and the send, causing data to be sent to the wrong client.
+    // SSE messages are small and sockets have send timeouts, so contention is bounded.
     auto payload = notification.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    {
-        std::lock_guard lock(m_mutex);
-        for (auto& [id, session] : m_sessions) {
-            if (session.sse_socket != INVALID_SOCKET) {
-                targets.emplace_back(id, session.sse_socket);
-            }
-        }
-    }
-
-    for (const auto& [id, sock] : targets) {
-        if (!send_sse_data(sock, payload)) {
-            // Send failed — close and unregister under lock
-            std::lock_guard lock(m_mutex);
-            auto it = m_sessions.find(id);
-            if (it != m_sessions.end() && it->second.sse_socket == sock) {
-                closesocket(it->second.sse_socket);
-                it->second.sse_socket = INVALID_SOCKET;
+    std::lock_guard lock(m_mutex);
+    for (auto& [id, session] : m_sessions) {
+        if (session.sse_socket != INVALID_SOCKET) {
+            if (!send_sse_data(session.sse_socket, payload)) {
+                closesocket(session.sse_socket);
+                session.sse_socket = INVALID_SOCKET;
             }
         }
     }
 }
 
 void c_mcp_session::push_event(const std::string& session_id, const nlohmann::json& notification) {
-    SOCKET sock = INVALID_SOCKET;
     auto payload = notification.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    {
-        std::lock_guard lock(m_mutex);
-        auto it = m_sessions.find(session_id);
-        if (it == m_sessions.end()) return;
-        sock = it->second.sse_socket;
-        if (sock == INVALID_SOCKET) return;
-    }
-
-    if (!send_sse_data(sock, payload)) {
-        std::lock_guard lock(m_mutex);
-        auto it = m_sessions.find(session_id);
-        if (it != m_sessions.end() && it->second.sse_socket == sock) {
-            closesocket(it->second.sse_socket);
-            it->second.sse_socket = INVALID_SOCKET;
-        }
+    std::lock_guard lock(m_mutex);
+    auto it = m_sessions.find(session_id);
+    if (it == m_sessions.end()) return;
+    if (it->second.sse_socket == INVALID_SOCKET) return;
+    if (!send_sse_data(it->second.sse_socket, payload)) {
+        closesocket(it->second.sse_socket);
+        it->second.sse_socket = INVALID_SOCKET;
     }
 }
 

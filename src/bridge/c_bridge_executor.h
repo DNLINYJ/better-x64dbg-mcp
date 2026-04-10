@@ -19,6 +19,10 @@ public:
     bool exec_command_async(const std::string& cmd);
     [[nodiscard]] bool exec_command_and_wait(const std::string& cmd, int timeout_ms = 5000);
 
+    // Atomically execute a command and evaluate an expression.
+    // Prevents races when the command sets a variable (e.g. $result) that the expression reads.
+    [[nodiscard]] duint exec_command_and_eval(const std::string& cmd, const std::string& expression);
+
     [[nodiscard]] duint eval_expression(const std::string& expression);
     [[nodiscard]] bool is_valid_expression(const std::string& expression);
 

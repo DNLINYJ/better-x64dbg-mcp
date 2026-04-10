@@ -37,11 +37,23 @@ bool c_bridge_executor::exec_command_async(const std::string& cmd) {
 }
 
 bool c_bridge_executor::exec_command_and_wait(const std::string& cmd, int timeout_ms) {
+    {
+        std::lock_guard lock(m_mutex);
+        if (!DbgCmdExecDirect(cmd.c_str())) {
+            return false;
+        }
+    }
+    // Wait outside lock — wait_for_pause only polls DbgIsRunning() which is thread-safe.
+    // This avoids blocking all other bridge operations for the entire wait duration.
+    return wait_for_pause(timeout_ms);
+}
+
+duint c_bridge_executor::exec_command_and_eval(const std::string& cmd, const std::string& expression) {
     std::lock_guard lock(m_mutex);
     if (!DbgCmdExecDirect(cmd.c_str())) {
-        return false;
+        return 0;
     }
-    return wait_for_pause(timeout_ms);
+    return DbgValFromString(expression.c_str());
 }
 
 bool c_bridge_executor::wait_for_pause(int timeout_ms) {

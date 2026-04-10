@@ -64,7 +64,7 @@ void c_http_server::stop() {
     if (!m_running.load()) return;
     m_running.store(false);
 
-    // Close all SSE connections
+    // Close all SSE connections — this wakes SSE handler threads so they can exit
     if (m_session_mgr) m_session_mgr->close_all();
 
     if (m_listen_socket != INVALID_SOCKET) {
@@ -72,6 +72,16 @@ void c_http_server::stop() {
         m_listen_socket = INVALID_SOCKET;
     }
     if (m_listener_thread.joinable()) m_listener_thread.join();
+
+    // Wait for active connection handler threads to finish before destroying state
+    // they reference (dispatcher, session manager, etc.)
+    {
+        std::unique_lock lock(m_conn_mutex);
+        m_conn_cv.wait_for(lock, std::chrono::milliseconds(SHUTDOWN_DRAIN_TIMEOUT_MS), [this] {
+            return m_active_connections.load() == 0;
+        });
+    }
+
     WSACleanup();
 }
 
@@ -93,11 +103,30 @@ void c_http_server::listener_loop() {
         SOCKET client = accept(m_listen_socket, reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
         if (client == INVALID_SOCKET) { if (!m_running.load()) break; continue; }
 
+        if (m_active_connections.load() >= MAX_CONNECTIONS) {
+            closesocket(client);
+            continue;
+        }
+
         std::thread(&c_http_server::handle_connection, this, client).detach();
     }
 }
 
 void c_http_server::handle_connection(SOCKET client_socket) {
+    // Track active connections for graceful shutdown and concurrency limiting.
+    // The guard decrements the counter and notifies stop() when this thread exits.
+    m_active_connections.fetch_add(1);
+    struct s_conn_guard {
+        c_http_server& server;
+        ~s_conn_guard() {
+            server.m_active_connections.fetch_sub(1);
+            {
+                std::lock_guard lock(server.m_conn_mutex);
+            }
+            server.m_conn_cv.notify_one();
+        }
+    } conn_guard{*this};
+
     // Timeouts
     DWORD timeout = RECV_TIMEOUT_MS;
     setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
@@ -123,8 +152,11 @@ void c_http_server::handle_connection(SOCKET client_socket) {
             header_end_pos = raw_data.find("\r\n\r\n");
             if (header_end_pos != std::string::npos) {
                 headers_complete = true;
-                auto cl_pos = raw_data.find("Content-Length:");
-                if (cl_pos == std::string::npos) cl_pos = raw_data.find("content-length:");
+                // Case-insensitive search for Content-Length (HTTP headers are case-insensitive)
+                std::string headers_lower = raw_data.substr(0, header_end_pos);
+                std::transform(headers_lower.begin(), headers_lower.end(), headers_lower.begin(),
+                              [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                auto cl_pos = headers_lower.find("content-length:");
                 if (cl_pos != std::string::npos) {
                     auto val_start = cl_pos + 15;
                     auto val_end = raw_data.find("\r\n", val_start);
