@@ -153,7 +153,7 @@ PLUG_EXPORT void plugsetup(PLUG_SETUPSTRUCT* setup_struct) {
     if (g_settings.auto_start) {
         if (start_server()) {
             _plugin_logprintf("[MCP] x64dbg MCP Server started on %s:%u (Streamable HTTP)\n", g_settings.host, g_settings.port);
-            _plugin_logputs("[MCP] Connect: http://127.0.0.1:27042/mcp");
+            _plugin_logprintf("[MCP] Connect: http://%s:%u/mcp\n", g_settings.host, g_settings.port);
         } else {
             _plugin_logputs("[MCP] Use 'mcpserver start' to retry");
         }

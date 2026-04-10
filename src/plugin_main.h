@@ -12,7 +12,7 @@
 constexpr auto PLUGIN_NAME = "x64dbg MCP Server";
 constexpr auto PLUGIN_VERSION = 1;
 constexpr auto PLUGIN_VERSION_STR = "1.0.0";
-constexpr auto PLUGIN_REPO_URL = "https://github.com/anthropics/x64dbg-mcp";
+constexpr auto PLUGIN_REPO_URL = "https://github.com/DNLINYJ/better-x64dbg-mcp";
 constexpr uint16_t DEFAULT_PORT = 27042;
 constexpr auto DEFAULT_HOST = "127.0.0.1";
 

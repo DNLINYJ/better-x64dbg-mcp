@@ -64,7 +64,7 @@ static LPDLGTEMPLATE build_about_template() {
     ptr = add_dialog_item(ptr, SS_CENTER, 7, 21, 146, 8, IDC_VER_LABEL, 0x0082, "");
     ptr = add_dialog_item(ptr, SS_CENTER, 7, 33, 146, 8, IDC_STATUS_LABEL, 0x0082, "");
     ptr = add_dialog_item(ptr, SS_ETCHEDHORZ, 7, 47, 146, 1, IDC_SEPARATOR, 0x0082, "");
-    ptr = add_dialog_item(ptr, SS_CENTER | SS_NOTIFY, 7, 53, 146, 8, IDC_URL_LABEL, 0x0082, "github.com/anthropics/x64dbg-mcp");
+    ptr = add_dialog_item(ptr, SS_CENTER | SS_NOTIFY, 7, 53, 146, 8, IDC_URL_LABEL, 0x0082, "github.com/DNLINYJ/better-x64dbg-mcp");
     ptr = add_dialog_item(ptr, SS_CENTER, 7, 65, 146, 8, IDC_DISCORD_LABEL, 0x0082, "");
     ptr = add_dialog_item(ptr, BS_DEFPUSHBUTTON | WS_TABSTOP, 55, 80, 50, 14, IDC_OK_BTN, 0x0080, "OK");
     return dlg;
