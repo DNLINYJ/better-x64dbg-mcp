@@ -19,7 +19,71 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\plugin.cpp" />
+    <ClCompile Include="src\plugin_main.cpp" />
+    <ClCompile Include="src\bridge\c_bridge_executor.cpp" />
+    <ClCompile Include="src\util\format_utils.cpp" />
+    <ClCompile Include="src\http\c_http_server.cpp" />
+    <ClCompile Include="src\mcp\c_mcp_dispatcher.cpp" />
+    <ClCompile Include="src\mcp\c_mcp_session.cpp" />
+    <ClCompile Include="src\mcp\c_mcp_events.cpp" />
+    <ClCompile Include="src\mcp\c_mcp_tools.cpp" />
+    <ClCompile Include="src\handlers\debug_handler.cpp" />
+    <ClCompile Include="src\handlers\register_handler.cpp" />
+    <ClCompile Include="src\handlers\memory_handler.cpp" />
+    <ClCompile Include="src\handlers\breakpoint_handler.cpp" />
+    <ClCompile Include="src\handlers\disasm_handler.cpp" />
+    <ClCompile Include="src\handlers\symbol_handler.cpp" />
+    <ClCompile Include="src\handlers\stack_handler.cpp" />
+    <ClCompile Include="src\handlers\thread_handler.cpp" />
+    <ClCompile Include="src\handlers\module_handler.cpp" />
+    <ClCompile Include="src\handlers\search_handler.cpp" />
+    <ClCompile Include="src\handlers\command_handler.cpp" />
+    <ClCompile Include="src\handlers\tracing_handler.cpp" />
+    <ClCompile Include="src\handlers\dumping_handler.cpp" />
+    <ClCompile Include="src\handlers\exceptions_handler.cpp" />
+    <ClCompile Include="src\handlers\controlflow_handler.cpp" />
+    <ClCompile Include="src\handlers\patch_handler.cpp" />
+    <ClCompile Include="src\handlers\annotation_handler.cpp" />
+    <ClCompile Include="src\handlers\memmap_handler.cpp" />
+    <ClCompile Include="src\handlers\process_handler.cpp" />
+    <ClCompile Include="src\handlers\handles_handler.cpp" />
+    <ClCompile Include="src\handlers\analysis_handler.cpp" />
+    <ClCompile Include="src\ui\about_dialog.cpp" />
+    <ClCompile Include="src\ui\settings_dialog.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\plugin_main.h" />
+    <ClInclude Include="src\bridge\c_bridge_executor.h" />
+    <ClInclude Include="src\util\format_utils.h" />
+    <ClInclude Include="src\http\c_http_server.h" />
+    <ClInclude Include="src\mcp\c_mcp_dispatcher.h" />
+    <ClInclude Include="src\mcp\c_mcp_session.h" />
+    <ClInclude Include="src\mcp\c_mcp_events.h" />
+    <ClInclude Include="src\mcp\c_mcp_tools.h" />
+    <ClInclude Include="src\handlers\debug_handler.h" />
+    <ClInclude Include="src\handlers\register_handler.h" />
+    <ClInclude Include="src\handlers\memory_handler.h" />
+    <ClInclude Include="src\handlers\breakpoint_handler.h" />
+    <ClInclude Include="src\handlers\disasm_handler.h" />
+    <ClInclude Include="src\handlers\symbol_handler.h" />
+    <ClInclude Include="src\handlers\stack_handler.h" />
+    <ClInclude Include="src\handlers\thread_handler.h" />
+    <ClInclude Include="src\handlers\module_handler.h" />
+    <ClInclude Include="src\handlers\search_handler.h" />
+    <ClInclude Include="src\handlers\command_handler.h" />
+    <ClInclude Include="src\handlers\tracing_handler.h" />
+    <ClInclude Include="src\handlers\dumping_handler.h" />
+    <ClInclude Include="src\handlers\exceptions_handler.h" />
+    <ClInclude Include="src\handlers\controlflow_handler.h" />
+    <ClInclude Include="src\handlers\patch_handler.h" />
+    <ClInclude Include="src\handlers\annotation_handler.h" />
+    <ClInclude Include="src\handlers\memmap_handler.h" />
+    <ClInclude Include="src\handlers\process_handler.h" />
+    <ClInclude Include="src\handlers\handles_handler.h" />
+    <ClInclude Include="src\handlers\analysis_handler.h" />
+    <ClInclude Include="src\ui\about_dialog.h" />
+    <ClInclude Include="src\ui\settings_dialog.h" />
+    <ClInclude Include="src\resources\plugin_icon.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
@@ -73,26 +137,22 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ExternalIncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);</ExternalIncludePath>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ExternalIncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);</ExternalIncludePath>
-  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;BETTERX64DBGMCP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;WIN32;_DEBUG;BETTERX64DBGMCP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)third_party\x64dbg\pluginsdk;$(ProjectDir)third_party;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>$(ProjectDir)third_party\x64dbg\pluginsdk;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>x32dbg.lib;x32bridge.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName).dp32</OutputFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -101,35 +161,36 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;BETTERX64DBGMCP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;WIN32;NDEBUG;BETTERX64DBGMCP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <EnableUAC>false</EnableUAC>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;BETTERX64DBGMCP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)third_party\x64dbg\pluginsdk;$(ProjectDir)third_party\x64dbg;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)third_party\x64dbg\pluginsdk;$(ProjectDir)third_party;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <AdditionalLibraryDirectories>$(ProjectDir)third_party\x64dbg\pluginsdk;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>x64dbg.lib;x64bridge.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>x32dbg.lib;x32bridge.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName).dp32</OutputFile>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;_DEBUG;BETTERX64DBGMCP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)third_party\x64dbg\pluginsdk;$(ProjectDir)third_party;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>$(ProjectDir)third_party\x64dbg\pluginsdk;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>x64dbg.lib;x64bridge.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName).dp64</OutputFile>
     </Link>
   </ItemDefinitionGroup>
@@ -139,19 +200,18 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;BETTERX64DBGMCP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NDEBUG;BETTERX64DBGMCP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)third_party\x64dbg\pluginsdk;$(ProjectDir)third_party\x64dbg;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)third_party\x64dbg\pluginsdk;$(ProjectDir)third_party;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <AdditionalLibraryDirectories>$(ProjectDir)third_party\x64dbg\pluginsdk;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>x64dbg.lib;x64bridge.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>x64dbg.lib;x64bridge.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName).dp64</OutputFile>
     </Link>
   </ItemDefinitionGroup>

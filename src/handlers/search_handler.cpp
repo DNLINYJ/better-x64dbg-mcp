@@ -1,0 +1,134 @@
+#include "handlers/search_handler.h"
+#include "bridge/c_bridge_executor.h"
+#include "util/format_utils.h"
+#include "bridgemain.h"
+#include "_dbgfunctions.h"
+
+namespace handlers::search {
+
+struct pattern_byte { uint8_t value = 0; bool is_wildcard = false; };
+
+static std::vector<pattern_byte> parse_byte_pattern(const std::string& pattern_str) {
+    std::string cleaned;
+    for (char c : pattern_str) if (c != ' ') cleaned += c;
+    if (cleaned.empty() || (cleaned.size() % 2) != 0) return {};
+    std::vector<pattern_byte> result;
+    for (size_t i = 0; i + 1 < cleaned.size(); i += 2) {
+        char hi = cleaned[i], lo = cleaned[i + 1];
+        if (hi == '?' || hi == '*' || lo == '?' || lo == '*') {
+            result.push_back({0, true});
+        } else {
+            auto is_hex = [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); };
+            if (!is_hex(hi) || !is_hex(lo)) return {};
+            char hex[3] = {hi, lo, '\0'};
+            result.push_back({static_cast<uint8_t>(std::stoul(hex, nullptr, 16)), false});
+        }
+    }
+    return result;
+}
+
+nlohmann::json pattern(const nlohmann::json& args) {
+    auto& bridge = get_bridge();
+    if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
+    auto pattern_str = args["pattern"].get<std::string>();
+    auto pat = parse_byte_pattern(pattern_str);
+    if (pat.empty()) throw std::runtime_error("Invalid pattern: " + pattern_str);
+    auto base_str = args.value("base", "");
+    auto size_val = args.value("size", 0);
+    auto max_results = args.value("max_results", 100);
+    duint search_base, search_size;
+    if (!base_str.empty()) {
+        search_base = bridge.eval_expression(base_str);
+        search_size = size_val > 0 ? static_cast<duint>(size_val) : 0x1000;
+    } else {
+        auto memmap = bridge.get_memory_map();
+        if (!memmap.has_value()) throw std::runtime_error("Cannot get memory map");
+        search_base = 0; search_size = 0;
+        for (const auto& page : memmap.value()) {
+            auto b = format_utils::parse_address(page["base"].get<std::string>());
+            auto s = page["size"].get<duint>();
+            if (search_base == 0) { search_base = b; search_size = s; }
+            else { search_size = (b + s) - search_base; }
+        }
+    }
+    auto mem = bridge.read_memory(search_base, static_cast<size_t>(search_size > 10*1024*1024 ? 10*1024*1024 : search_size));
+    if (!mem.has_value()) throw std::runtime_error(mem.error());
+    auto hits = nlohmann::json::array();
+    const auto& buf = mem.value();
+    if (!pat.empty() && buf.size() >= pat.size()) {
+        for (size_t i = 0; i <= buf.size() - pat.size() && static_cast<int>(hits.size()) < max_results; ++i) {
+            bool match = true;
+            for (size_t j = 0; j < pat.size(); ++j) {
+                if (!pat[j].is_wildcard && buf[i + j] != pat[j].value) { match = false; break; }
+            }
+            if (match) hits.push_back(format_utils::format_address(search_base + i));
+        }
+    }
+    return {{"pattern", pattern_str}, {"base", format_utils::format_address(search_base)}, {"hits", hits}, {"count", hits.size()}};
+}
+
+nlohmann::json strings(const std::string& address_str, size_t size) {
+    auto& bridge = get_bridge();
+    if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
+    auto address = bridge.eval_expression(address_str);
+    auto mem = bridge.read_memory(address, size);
+    if (!mem.has_value()) throw std::runtime_error(mem.error());
+    auto found = nlohmann::json::array();
+    const auto& buf = mem.value();
+    std::string current;
+    duint string_start = 0;
+    for (size_t i = 0; i < buf.size(); ++i) {
+        if (buf[i] >= 0x20 && buf[i] < 0x7F) {
+            if (current.empty()) string_start = address + i;
+            current += static_cast<char>(buf[i]);
+        } else {
+            if (current.size() >= 4) found.push_back({{"address", format_utils::format_address(string_start)}, {"string", current}});
+            current.clear();
+        }
+    }
+    if (current.size() >= 4) found.push_back({{"address", format_utils::format_address(string_start)}, {"string", current}});
+    return {{"strings", found}, {"count", found.size()}};
+}
+
+nlohmann::json string_at(const std::string& address_str) {
+    auto& bridge = get_bridge();
+    if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
+    auto address = bridge.eval_expression(address_str);
+    auto mem = bridge.read_memory(address, 256);
+    if (!mem.has_value()) throw std::runtime_error(mem.error());
+    std::string result;
+    for (auto b : mem.value()) { if (b == 0) break; result += static_cast<char>(b); }
+    return {{"address", format_utils::format_address(address)}, {"string", result}};
+}
+
+nlohmann::json autocomplete(const std::string& query) {
+    auto& bridge = get_bridge();
+    if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
+    bridge.exec_command("symfind " + query);
+    return {{"query", query}, {"message", "Results in symbol view"}};
+}
+
+nlohmann::json find_strings_module(const std::string& module) {
+    auto& bridge = get_bridge();
+    if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
+    auto b = bridge.get_module_base(module);
+    if (b == 0) throw std::runtime_error("Module not found: " + module);
+    bridge.exec_command("strref " + format_utils::format_address(b));
+    return {{"module", module}, {"base", format_utils::format_address(b)}, {"message", "String references in x64dbg references view"}};
+}
+
+nlohmann::json encoding(const std::string& address_str) {
+    auto& bridge = get_bridge();
+    if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
+    auto address = bridge.eval_expression(address_str);
+    auto mem = bridge.read_memory(address, 4);
+    if (!mem.has_value()) throw std::runtime_error(mem.error());
+    const auto& buf = mem.value();
+    std::string enc = "ASCII";
+    if (buf.size() >= 2 && buf[0] == 0xFF && buf[1] == 0xFE) enc = "UTF-16LE";
+    else if (buf.size() >= 2 && buf[0] == 0xFE && buf[1] == 0xFF) enc = "UTF-16BE";
+    else if (buf.size() >= 3 && buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF) enc = "UTF-8 (BOM)";
+    return {{"address", format_utils::format_address(address)}, {"encoding", enc}};
+}
+
+} // namespace handlers::search

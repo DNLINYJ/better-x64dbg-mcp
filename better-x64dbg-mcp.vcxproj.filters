@@ -1,25 +1,222 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="源文件">
+    <Filter Include="src">
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
     </Filter>
-    <Filter Include="头文件">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    <Filter Include="src\bridge">
+      <UniqueIdentifier>{a1b2c3d4-0001-0001-0001-000000000001}</UniqueIdentifier>
     </Filter>
-    <Filter Include="资源文件">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    <Filter Include="src\http">
+      <UniqueIdentifier>{a1b2c3d4-0001-0001-0001-000000000002}</UniqueIdentifier>
     </Filter>
-    <Filter Include="源文件\src">
-      <UniqueIdentifier>{c7893eb7-2d51-4b8f-8bcc-95c6da477ee7}</UniqueIdentifier>
+    <Filter Include="src\mcp">
+      <UniqueIdentifier>{a1b2c3d4-0001-0001-0001-000000000003}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\handlers">
+      <UniqueIdentifier>{a1b2c3d4-0001-0001-0001-000000000004}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\ui">
+      <UniqueIdentifier>{a1b2c3d4-0001-0001-0001-000000000005}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\util">
+      <UniqueIdentifier>{a1b2c3d4-0001-0001-0001-000000000006}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\resources">
+      <UniqueIdentifier>{a1b2c3d4-0001-0001-0001-000000000007}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\plugin.cpp">
-      <Filter>源文件\src</Filter>
+    <ClCompile Include="src\plugin_main.cpp">
+      <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\bridge\c_bridge_executor.cpp">
+      <Filter>src\bridge</Filter>
+    </ClCompile>
+    <ClCompile Include="src\util\format_utils.cpp">
+      <Filter>src\util</Filter>
+    </ClCompile>
+    <ClCompile Include="src\http\c_http_server.cpp">
+      <Filter>src\http</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mcp\c_mcp_dispatcher.cpp">
+      <Filter>src\mcp</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mcp\c_mcp_session.cpp">
+      <Filter>src\mcp</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mcp\c_mcp_events.cpp">
+      <Filter>src\mcp</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mcp\c_mcp_tools.cpp">
+      <Filter>src\mcp</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\debug_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\register_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\memory_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\breakpoint_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\disasm_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\symbol_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\stack_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\thread_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\module_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\search_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\command_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\tracing_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\dumping_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\exceptions_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\controlflow_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\patch_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\annotation_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\memmap_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\process_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\handles_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\handlers\analysis_handler.cpp">
+      <Filter>src\handlers</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\about_dialog.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\settings_dialog.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\plugin_main.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\bridge\c_bridge_executor.h">
+      <Filter>src\bridge</Filter>
+    </ClInclude>
+    <ClInclude Include="src\util\format_utils.h">
+      <Filter>src\util</Filter>
+    </ClInclude>
+    <ClInclude Include="src\http\c_http_server.h">
+      <Filter>src\http</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mcp\c_mcp_dispatcher.h">
+      <Filter>src\mcp</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mcp\c_mcp_session.h">
+      <Filter>src\mcp</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mcp\c_mcp_events.h">
+      <Filter>src\mcp</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mcp\c_mcp_tools.h">
+      <Filter>src\mcp</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\debug_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\register_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\memory_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\breakpoint_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\disasm_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\symbol_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\stack_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\thread_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\module_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\search_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\command_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\tracing_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\dumping_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\exceptions_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\controlflow_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\patch_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\annotation_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\memmap_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\process_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\handles_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\handlers\analysis_handler.h">
+      <Filter>src\handlers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\resources\plugin_icon.h">
+      <Filter>src\resources</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\about_dialog.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\settings_dialog.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
