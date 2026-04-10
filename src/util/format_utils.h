@@ -63,6 +63,8 @@ namespace format_utils {
             }
             clean += c;
         }
+        // Reject odd-length input instead of silently dropping the last nibble
+        if (clean.size() % 2 != 0) return {};
         for (size_t i = 0; i + 1 < clean.size(); i += 2) {
             auto byte_str = clean.substr(i, 2);
             bytes.push_back(static_cast<uint8_t>(std::stoul(byte_str, nullptr, 16)));

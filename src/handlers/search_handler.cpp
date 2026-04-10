@@ -27,6 +27,18 @@ static std::vector<pattern_byte> parse_byte_pattern(const std::string& pattern_s
     return result;
 }
 
+static void search_buffer(const std::vector<uint8_t>& buf, const std::vector<pattern_byte>& pat,
+                          duint region_base, int max_results, nlohmann::json& hits) {
+    if (pat.empty() || buf.size() < pat.size()) return;
+    for (size_t i = 0; i <= buf.size() - pat.size() && static_cast<int>(hits.size()) < max_results; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < pat.size(); ++j) {
+            if (!pat[j].is_wildcard && buf[i + j] != pat[j].value) { match = false; break; }
+        }
+        if (match) hits.push_back(format_utils::format_address(region_base + i));
+    }
+}
+
 nlohmann::json pattern(const nlohmann::json& args) {
     auto& bridge = get_bridge();
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
@@ -36,35 +48,32 @@ nlohmann::json pattern(const nlohmann::json& args) {
     auto base_str = args.value("base", "");
     auto size_val = args.value("size", 0);
     auto max_results = args.value("max_results", 100);
-    duint search_base, search_size;
-    if (!base_str.empty()) {
-        search_base = bridge.eval_expression(base_str);
-        search_size = size_val > 0 ? static_cast<duint>(size_val) : 0x1000;
-    } else {
-        auto memmap = bridge.get_memory_map();
-        if (!memmap.has_value()) throw std::runtime_error("Cannot get memory map");
-        search_base = 0; search_size = 0;
-        for (const auto& page : memmap.value()) {
-            auto b = format_utils::parse_address(page["base"].get<std::string>());
-            auto s = page["size"].get<duint>();
-            if (search_base == 0) { search_base = b; search_size = s; }
-            else { search_size = (b + s) - search_base; }
-        }
-    }
-    auto mem = bridge.read_memory(search_base, static_cast<size_t>(search_size > 10*1024*1024 ? 10*1024*1024 : search_size));
-    if (!mem.has_value()) throw std::runtime_error(mem.error());
     auto hits = nlohmann::json::array();
-    const auto& buf = mem.value();
-    if (!pat.empty() && buf.size() >= pat.size()) {
-        for (size_t i = 0; i <= buf.size() - pat.size() && static_cast<int>(hits.size()) < max_results; ++i) {
-            bool match = true;
-            for (size_t j = 0; j < pat.size(); ++j) {
-                if (!pat[j].is_wildcard && buf[i + j] != pat[j].value) { match = false; break; }
-            }
-            if (match) hits.push_back(format_utils::format_address(search_base + i));
-        }
+    if (!base_str.empty()) {
+        auto search_base = bridge.eval_expression(base_str);
+        duint search_size = size_val > 0 ? static_cast<duint>(size_val) : 0x1000;
+        if (search_size > 10 * 1024 * 1024) search_size = 10 * 1024 * 1024;
+        auto mem = bridge.read_memory(search_base, static_cast<size_t>(search_size));
+        if (!mem.has_value()) throw std::runtime_error(mem.error());
+        search_buffer(mem.value(), pat, search_base, max_results, hits);
+        return {{"pattern", pattern_str}, {"base", format_utils::format_address(search_base)}, {"hits", hits}, {"count", hits.size()}};
     }
-    return {{"pattern", pattern_str}, {"base", format_utils::format_address(search_base)}, {"hits", hits}, {"count", hits.size()}};
+    // No base specified — iterate each committed memory region individually.
+    // The old code computed a contiguous span from lowest to highest region,
+    // which included unmapped holes and would fail on read_memory.
+    auto memmap = bridge.get_memory_map();
+    if (!memmap.has_value()) throw std::runtime_error("Cannot get memory map");
+    for (const auto& page : memmap.value()) {
+        if (static_cast<int>(hits.size()) >= max_results) break;
+        if (page["state"].get<std::string>() != "MEM_COMMIT") continue;
+        auto region_base = format_utils::parse_address(page["base"].get<std::string>());
+        auto region_size = page["size"].get<duint>();
+        if (region_size > 10 * 1024 * 1024) region_size = 10 * 1024 * 1024;
+        auto mem = bridge.read_memory(region_base, static_cast<size_t>(region_size));
+        if (!mem.has_value()) continue;  // skip unreadable regions (e.g. guarded pages)
+        search_buffer(mem.value(), pat, region_base, max_results, hits);
+    }
+    return {{"pattern", pattern_str}, {"hits", hits}, {"count", hits.size()}};
 }
 
 nlohmann::json strings(const std::string& address_str, size_t size) {

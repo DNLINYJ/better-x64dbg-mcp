@@ -12,8 +12,8 @@ void c_mcp_events::start(c_mcp_session* session_mgr) {
 }
 
 void c_mcp_events::stop() {
-    if (!m_running.load()) return;
-    m_running.store(false);
+    // Use exchange to prevent concurrent calls from both attempting to join the thread
+    if (!m_running.exchange(false)) return;
     m_queue_cv.notify_all();
     if (m_push_thread.joinable()) {
         m_push_thread.join();

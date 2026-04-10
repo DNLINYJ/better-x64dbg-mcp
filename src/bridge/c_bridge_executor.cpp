@@ -2,6 +2,7 @@
 
 #include <thread>
 #include <chrono>
+#include <cstring>
 
 #include "bridgemain.h"
 #include "_plugins.h"
@@ -102,10 +103,15 @@ bool c_bridge_executor::is_valid_read_ptr(duint address) {
 }
 
 std::expected<REGDUMP, std::string> c_bridge_executor::get_register_dump() {
-    REGDUMP dump{};
-    if (!DbgGetRegDumpEx(reinterpret_cast<REGDUMP_AVX512*>(&dump), sizeof(REGDUMP))) {
+    // Use a buffer large enough for REGDUMP_AVX512 (the API's declared parameter type)
+    // even though we only request sizeof(REGDUMP) worth of data. This prevents a stack
+    // overflow if the API implementation doesn't strictly respect the size parameter.
+    alignas(REGDUMP_AVX512) char buffer[sizeof(REGDUMP_AVX512)]{};
+    if (!DbgGetRegDumpEx(reinterpret_cast<REGDUMP_AVX512*>(buffer), sizeof(REGDUMP))) {
         return std::unexpected("Failed to get register dump");
     }
+    REGDUMP dump;
+    std::memcpy(&dump, buffer, sizeof(REGDUMP));
     return dump;
 }
 
@@ -259,10 +265,11 @@ std::expected<nlohmann::json, std::string> c_bridge_executor::get_function_bound
     if (!DbgFunctionGet(address, &start, &end)) {
         return std::unexpected("No function found at " + format_utils::format_address(address));
     }
+    // DbgFunctionGet returns an inclusive range [start, end], so size includes both endpoints
     return nlohmann::json{
         {"start", format_utils::format_address(start)},
         {"end",   format_utils::format_address(end)},
-        {"size",  end - start}
+        {"size",  end - start + 1}
     };
 }
 

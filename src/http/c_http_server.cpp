@@ -61,8 +61,7 @@ std::expected<void, std::string> c_http_server::start(
 }
 
 void c_http_server::stop() {
-    if (!m_running.load()) return;
-    m_running.store(false);
+    if (!m_running.exchange(false)) return;
 
     // Close all SSE connections — this wakes SSE handler threads so they can exit
     if (m_session_mgr) m_session_mgr->close_all();

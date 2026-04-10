@@ -36,7 +36,7 @@ private:
     static constexpr size_t MAX_REQUEST_SIZE = 1024 * 1024;
     static constexpr int RECV_TIMEOUT_MS = 5000;
     static constexpr int MAX_CONNECTIONS = 64;
-    static constexpr int SHUTDOWN_DRAIN_TIMEOUT_MS = 10000;
+    static constexpr int SHUTDOWN_DRAIN_TIMEOUT_MS = 35000;
 
     SOCKET m_listen_socket = INVALID_SOCKET;
     std::atomic<bool> m_running{false};
