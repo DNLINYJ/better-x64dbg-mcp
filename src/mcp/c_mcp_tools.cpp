@@ -228,7 +228,8 @@ json mcp_tools::build_tools_list() {
         make_action("step_into"), make_action("step_over"), make_action("step_out"),
         make_action("stop_debug"), make_action("restart_debug"),
         make_action("run_to_address", {{"address", str_field("Target address")}}, {"address"}),
-        make_action("state")
+        make_action("state"),
+        make_action("last_crash")
     }));
 
     // x64dbg_registers
@@ -467,6 +468,7 @@ json mcp_tools::dispatch_tool_call(const std::string& tool, const json& args) {
         if (action == "restart_debug")    return handlers::debug::restart_debug();
         if (action == "run_to_address")   return handlers::debug::run_to_address(args["address"]);
         if (action == "state")            return handlers::debug::state();
+        if (action == "last_crash")       return handlers::debug::last_crash();
     }
     else if (tool == "x64dbg_registers") {
         if (action == "get_all")  return handlers::registers::get_all();

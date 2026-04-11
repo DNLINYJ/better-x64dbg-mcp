@@ -14,6 +14,7 @@ namespace handlers::debug {
     nlohmann::json stop_debug();
     nlohmann::json restart_debug();
     nlohmann::json run_to_address(const std::string& address);
+    nlohmann::json last_crash();
 
     // Called from plugin callbacks to capture/clear launch-time session state.
     void capture_launch_target(const char* file_name);  // CBINITDEBUG

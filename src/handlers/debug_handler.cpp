@@ -1,5 +1,6 @@
 #include "handlers/debug_handler.h"
 #include "bridge/c_bridge_executor.h"
+#include "mcp/c_mcp_events.h"
 #include "util/format_utils.h"
 #include "_dbgfunctions.h"
 
@@ -264,6 +265,23 @@ nlohmann::json run_to_address(const std::string& address) {
     bridge.exec_command("bp " + address + ", ss");
     bridge.exec_command("run");
     return {{"message", "Running to " + address}, {"target", address}};
+}
+
+nlohmann::json last_crash() {
+    auto result = get_events().get_last_crash();
+
+    // Enrich with target path from launch state if available
+    if (result.value("has_crash", false)) {
+        std::lock_guard lock(s_launch_mutex);
+        if (!s_launch_target.empty()) {
+            if (!result.contains("process")) {
+                result["process"] = nlohmann::json::object();
+            }
+            result["process"]["target"] = s_launch_target;
+        }
+    }
+
+    return result;
 }
 
 } // namespace handlers::debug

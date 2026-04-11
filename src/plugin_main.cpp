@@ -19,6 +19,8 @@ static c_mcp_session g_session_mgr;
 static c_mcp_events g_events;
 static s_plugin_settings g_settings;
 
+c_mcp_events& get_events() { return g_events; }
+
 // ============================================================================
 // Menu helpers
 // ============================================================================
