@@ -36,15 +36,28 @@ std::expected<void, std::string> c_http_server::start(
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
     inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
 
-    if (bind(m_listen_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-        auto err = WSAGetLastError();
+    // Try the configured port first, then fall back to subsequent ports on conflict
+    int last_err = 0;
+    bool bound = false;
+    for (int i = 0; i < PORT_RETRY_COUNT; ++i) {
+        auto try_port = static_cast<int>(port) + i;
+        if (try_port > 65535) break;
+        addr.sin_port = htons(static_cast<uint16_t>(try_port));
+        if (bind(m_listen_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != SOCKET_ERROR) {
+            m_port = static_cast<uint16_t>(try_port);
+            bound = true;
+            break;
+        }
+        last_err = WSAGetLastError();
+        if (last_err != WSAEADDRINUSE) break;  // non-recoverable error, stop retrying
+    }
+    if (!bound) {
         closesocket(m_listen_socket);
         m_listen_socket = INVALID_SOCKET;
         WSACleanup();
-        return std::unexpected("bind() failed: " + std::to_string(err));
+        return std::unexpected("bind() failed: " + std::to_string(last_err));
     }
 
     if (listen(m_listen_socket, SOMAXCONN) == SOCKET_ERROR) {

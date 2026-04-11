@@ -87,7 +87,9 @@ static bool mcp_server_command(int argc, char* argv[]) {
     if (sub == "start") {
         if (g_server.is_running()) { _plugin_logputs("[MCP] Server is already running"); return true; }
         if (start_server()) {
-            _plugin_logprintf("[MCP] Server started on %s:%u\n", g_settings.host, g_settings.port);
+            _plugin_logprintf("[MCP] Server started on %s:%u\n", g_settings.host, g_server.get_port());
+            if (g_server.get_port() != g_settings.port)
+                _plugin_logprintf("[MCP] Note: configured port %u was in use, fell back to %u\n", g_settings.port, g_server.get_port());
         }
         update_menu_state();
         return g_server.is_running();
@@ -152,8 +154,10 @@ PLUG_EXPORT void plugsetup(PLUG_SETUPSTRUCT* setup_struct) {
     // Auto-start
     if (g_settings.auto_start) {
         if (start_server()) {
-            _plugin_logprintf("[MCP] x64dbg MCP Server started on %s:%u (Streamable HTTP)\n", g_settings.host, g_settings.port);
-            _plugin_logprintf("[MCP] Connect: http://%s:%u/mcp\n", g_settings.host, g_settings.port);
+            _plugin_logprintf("[MCP] x64dbg MCP Server started on %s:%u (Streamable HTTP)\n", g_settings.host, g_server.get_port());
+            _plugin_logprintf("[MCP] Connect: http://%s:%u/mcp\n", g_settings.host, g_server.get_port());
+            if (g_server.get_port() != g_settings.port)
+                _plugin_logprintf("[MCP] Note: configured port %u was in use, fell back to %u\n", g_settings.port, g_server.get_port());
         } else {
             _plugin_logputs("[MCP] Use 'mcpserver start' to retry");
         }
@@ -171,7 +175,9 @@ PLUG_EXPORT void CBMENUENTRY(CBTYPE, void* call_info) {
         if (g_server.is_running()) {
             _plugin_logputs("[MCP] Server is already running");
         } else if (start_server()) {
-            _plugin_logprintf("[MCP] Server started on %s:%u\n", g_settings.host, g_settings.port);
+            _plugin_logprintf("[MCP] Server started on %s:%u\n", g_settings.host, g_server.get_port());
+            if (g_server.get_port() != g_settings.port)
+                _plugin_logprintf("[MCP] Note: configured port %u was in use, fell back to %u\n", g_settings.port, g_server.get_port());
         }
         update_menu_state();
         break;
@@ -193,7 +199,9 @@ PLUG_EXPORT void CBMENUENTRY(CBTYPE, void* call_info) {
             if (g_server.is_running() && (old_host != g_settings.host || old_port != g_settings.port)) {
                 stop_server();
                 if (start_server()) {
-                    _plugin_logprintf("[MCP] Server restarted on %s:%u\n", g_settings.host, g_settings.port);
+                    _plugin_logprintf("[MCP] Server restarted on %s:%u\n", g_settings.host, g_server.get_port());
+                    if (g_server.get_port() != g_settings.port)
+                        _plugin_logprintf("[MCP] Note: configured port %u was in use, fell back to %u\n", g_settings.port, g_server.get_port());
                 }
                 update_menu_state();
             }

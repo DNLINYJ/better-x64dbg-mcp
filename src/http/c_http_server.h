@@ -37,6 +37,7 @@ private:
     static constexpr int RECV_TIMEOUT_MS = 5000;
     static constexpr int MAX_CONNECTIONS = 64;
     static constexpr int SHUTDOWN_DRAIN_TIMEOUT_MS = 35000;
+    static constexpr int PORT_RETRY_COUNT = 10;
 
     SOCKET m_listen_socket = INVALID_SOCKET;
     std::atomic<bool> m_running{false};
