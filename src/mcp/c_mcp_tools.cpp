@@ -24,6 +24,49 @@
 
 using json = nlohmann::json;
 
+// Parse a JSON value as unsigned integer, accepting decimal and 0x-prefixed hex strings.
+// Throws on invalid input to preserve error semantics for required fields.
+static unsigned long long parse_int(const json& val) {
+    if (val.is_number_unsigned()) return val.get<unsigned long long>();
+    if (val.is_number_integer()) {
+        auto v = val.get<long long>();
+        if (v < 0) throw std::runtime_error("Expected unsigned integer, got " + val.dump());
+        return static_cast<unsigned long long>(v);
+    }
+    if (val.is_number_float()) throw std::runtime_error("Expected integer, got float " + val.dump());
+    if (val.is_string()) {
+        const auto& s = val.get_ref<const std::string&>();
+        if (s.empty() || s[0] <= ' ' || s[0] == '-' || s[0] == '+' || s.back() <= ' ')
+            throw std::runtime_error("Invalid unsigned integer: " + s);
+        int base = 10;
+        if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+            base = 16;
+        size_t pos = 0;
+        auto result = std::stoull(s, &pos, base);
+        if (pos != s.size())
+            throw std::runtime_error("Invalid integer (trailing characters): " + s);
+        return result;
+    }
+    throw std::runtime_error("Expected integer value, got " + val.dump());
+}
+
+// Parse and range-check to a target type. Throws if value overflows T.
+template<typename T>
+static T parse_int_as(const json& val) {
+    auto v = parse_int(val);
+    if (v > static_cast<unsigned long long>((std::numeric_limits<T>::max)()))
+        throw std::runtime_error("Value " + std::to_string(v) + " exceeds range for target type");
+    return static_cast<T>(v);
+}
+
+// Extract an optional integer field with default, accepting hex strings.
+// Returns default only when key is absent; throws on present-but-invalid values.
+template<typename T = unsigned long long>
+static T parse_int_field(const json& args, const std::string& key, T default_val) {
+    if (!args.contains(key)) return default_val;
+    return parse_int_as<T>(args[key]);
+}
+
 // Helper to build a single action variant for oneOf
 static json make_action(const std::string& name,
                         const std::vector<std::pair<std::string, json>>& fields = {},
@@ -67,33 +110,138 @@ static json make_tool(const std::string& name, const std::string& description, c
     return {{"name", name}, {"description", description}, {"inputSchema", input_schema}};
 }
 
-static json oneOf_schema(const std::vector<json>& variants) {
-    return {{"type", "object"}, {"properties", {{"action", {{"type", "string"}}}}}, {"required", json::array({"action"})}, {"oneOf", variants}};
+// Format a param with optional enum values for action documentation.
+static std::string format_param(const std::string& name, const json& schema, bool required) {
+    std::string result = name;
+    if (schema.contains("enum")) {
+        result += ":";
+        for (size_t i = 0; i < schema["enum"].size(); ++i) {
+            result += (i == 0 ? " " : "/");
+            const auto& v = schema["enum"][i];
+            result += v.is_string() ? v.get<std::string>() : v.dump();
+        }
+    }
+    return required ? result : "[" + result + "]";
+}
+
+// Build a mega-tool: flat schema (no top-level oneOf) + auto-generated action docs.
+// Claude's API rejects oneOf/allOf/anyOf at the top level of inputSchema.
+static json make_mega_tool(const std::string& name, const std::string& base_desc,
+                           const std::vector<json>& variants) {
+    json action_names = json::array();
+    json all_props = json::object();
+    std::string desc = base_desc + "\nActions:";
+
+    for (const auto& variant : variants) {
+        if (!variant.contains("properties")) continue;
+        const auto& props = variant["properties"];
+
+        // Extract action name
+        std::string action_name;
+        if (props.contains("action") && props["action"].contains("const")) {
+            action_name = props["action"]["const"].get<std::string>();
+            action_names.push_back(action_name);
+        }
+
+        // Build required set (excluding "action")
+        std::vector<std::string> req_set;
+        if (variant.contains("required")) {
+            for (const auto& r : variant["required"]) {
+                auto s = r.get<std::string>();
+                if (s != "action") req_set.push_back(s);
+            }
+        }
+
+        // Build action doc line: action_name(req1, req2, [opt1: a/b/c])
+        desc += "\n- " + action_name;
+        std::vector<std::string> param_parts;
+        // Required params first, then optional
+        for (auto it = props.begin(); it != props.end(); ++it) {
+            if (it.key() == "action") continue;
+            bool is_req = std::find(req_set.begin(), req_set.end(), it.key()) != req_set.end();
+            if (is_req) param_parts.push_back(format_param(it.key(), it.value(), true));
+        }
+        for (auto it = props.begin(); it != props.end(); ++it) {
+            if (it.key() == "action") continue;
+            bool is_req = std::find(req_set.begin(), req_set.end(), it.key()) != req_set.end();
+            if (!is_req) param_parts.push_back(format_param(it.key(), it.value(), false));
+        }
+        if (!param_parts.empty()) {
+            desc += "(";
+            for (size_t i = 0; i < param_parts.size(); ++i) {
+                if (i > 0) desc += ", ";
+                desc += param_parts[i];
+            }
+            desc += ")";
+        }
+
+        // Merge properties into flat schema
+        for (auto it = props.begin(); it != props.end(); ++it) {
+            if (it.key() == "action") continue;
+
+            if (!all_props.contains(it.key())) {
+                all_props[it.key()] = it.value();
+            } else if (all_props[it.key()] != it.value()) {
+                auto& existing = all_props[it.key()];
+                const auto& incoming = it.value();
+                auto et = existing.value("type", ""), it2 = incoming.value("type", "");
+
+                // Carry forward whichever description exists
+                std::string d;
+                if (existing.contains("description"))
+                    d = existing["description"].get<std::string>();
+                else if (incoming.contains("description"))
+                    d = incoming["description"].get<std::string>();
+
+                if (et == it2 && !et.empty()) {
+                    // Same base type — drop enum on conflict; per-action docs are authoritative
+                    existing.erase("enum");
+                    if (!existing.contains("description") && !d.empty())
+                        existing["description"] = d;
+                } else {
+                    // Different types — use string as common type (parse_int handles conversion)
+                    existing = {{"type", "string"}};
+                    if (!d.empty()) existing["description"] = d;
+                }
+            }
+        }
+    }
+
+    all_props["action"] = {{"type", "string"}, {"enum", action_names}};
+
+    json schema = {
+        {"type", "object"},
+        {"properties", all_props},
+        {"required", json::array({"action"})},
+        {"additionalProperties", false}
+    };
+
+    return {{"name", name}, {"description", desc}, {"inputSchema", schema}};
 }
 
 json mcp_tools::build_tools_list() {
     json tools = json::array();
 
     // x64dbg_debug
-    tools.push_back(make_tool("x64dbg_debug", "Execute core debugger actions (run, pause, step, state, etc.)", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_debug", "Execute core debugger actions.", {
         make_action("run"), make_action("pause"), make_action("force_pause"),
         make_action("step_into"), make_action("step_over"), make_action("step_out"),
         make_action("stop_debug"), make_action("restart_debug"),
         make_action("run_to_address", {{"address", str_field("Target address")}}, {"address"}),
         make_action("state")
-    })));
+    }));
 
     // x64dbg_registers
-    tools.push_back(make_tool("x64dbg_registers", "Read/write CPU registers and flags", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_registers", "Read/write CPU registers and flags.", {
         make_action("get_all"),
         make_action("get", {{"name", str_field("Register name")}}, {"name"}),
         make_action("set", {{"name", str_field()}, {"value", str_field()}}, {"name", "value"}),
         make_action("flags"),
         make_action("avx512")
-    })));
+    }));
 
     // x64dbg_memory
-    tools.push_back(make_tool("x64dbg_memory", "Read/write/query memory in debugged process", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_memory", "Read/write/query memory in debugged process.", {
         make_action("read", {{"address", str_field()}, {"size", int_field()}}, {"address"}),
         make_action("write", {{"address", str_field()}, {"bytes", str_field("Hex bytes")}, {"verify", bool_field()}}, {"address", "bytes"}),
         make_action("is_valid", {{"address", str_field()}}, {"address"}),
@@ -103,10 +251,10 @@ json mcp_tools::build_tools_list() {
         make_action("protect", {{"address", str_field()}, {"size", str_field()}, {"protection", str_field()}}, {"address", "protection"}),
         make_action("is_code", {{"address", str_field()}}, {"address"}),
         make_action("update_map")
-    })));
+    }));
 
     // x64dbg_breakpoints
-    tools.push_back(make_tool("x64dbg_breakpoints", "Breakpoint management (set, delete, configure, list)", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_breakpoints", "Breakpoint management.", {
         make_action("set_software", {{"address", str_field()}, {"singleshot", bool_field()}}, {"address"}),
         make_action("set_hardware", {{"address", str_field()}, {"type", str_enum({"r","w","x"})}, {"size", str_enum({"1","2","4","8"})}}, {"address"}),
         make_action("set_memory", {{"address", str_field()}, {"type", str_enum({"a","r","w","x"})}}, {"address"}),
@@ -125,26 +273,26 @@ json mcp_tools::build_tools_list() {
             {"command_text", str_field()}, {"log_text", str_field()}, {"log_condition", str_field()},
             {"silent", bool_field()}, {"fast_resume", bool_field()}, {"name", str_field()}}, {"address"}),
         make_action("configure_batch", {{"breakpoints", {{"type", "array"}, {"items", {{"type", "object"}}}}}}, {"breakpoints"})
-    })));
+    }));
 
     // x64dbg_disassembly
-    tools.push_back(make_tool("x64dbg_disassembly", "Disassemble instructions at address or function", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_disassembly", "Disassemble instructions at address or function.", {
         make_action("at", {{"address", str_field()}, {"count", int_field()}}, {"address"}),
         make_action("function", {{"address", str_field()}, {"max_instructions", int_field()}}, {"address"}),
         make_action("basic", {{"address", str_field()}}, {"address"}),
         make_action("assemble", {{"address", str_field()}, {"instruction", str_field()}}, {"address", "instruction"})
-    })));
+    }));
 
     // x64dbg_symbols
-    tools.push_back(make_tool("x64dbg_symbols", "Resolve, search, and list symbols", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_symbols", "Resolve, search, and list symbols.", {
         make_action("resolve", {{"name", str_field("Symbol name or expression")}}, {"name"}),
         make_action("at", {{"address", str_field()}}, {"address"}),
         make_action("search", {{"pattern", str_field()}, {"module", str_field()}}, {"pattern"}),
         make_action("list", {{"module", str_field()}}, {"module"})
-    })));
+    }));
 
     // x64dbg_stack
-    tools.push_back(make_tool("x64dbg_stack", "Call stack, stack memory, SEH chain", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_stack", "Call stack, stack memory, SEH chain.", {
         make_action("trace"),
         make_action("read", {{"address", str_field()}, {"size", int_field()}}, {}),
         make_action("pointers"),
@@ -152,10 +300,10 @@ json mcp_tools::build_tools_list() {
         make_action("callstack_thread", {{"handle", str_field()}}, {"handle"}),
         make_action("return_address"),
         make_action("seh_chain")
-    })));
+    }));
 
     // x64dbg_threads
-    tools.push_back(make_tool("x64dbg_threads", "Thread enumeration and control", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_threads", "Thread enumeration and control.", {
         make_action("list"), make_action("current"),
         make_action("get", {{"id", int_field("Thread ID")}}, {"id"}),
         make_action("switch", {{"id", int_field()}}, {"id"}),
@@ -164,29 +312,29 @@ json mcp_tools::build_tools_list() {
         make_action("count"),
         make_action("teb", {{"tid", int_field()}}, {"tid"}),
         make_action("name", {{"tid", int_field()}}, {"tid"})
-    })));
+    }));
 
     // x64dbg_modules
-    tools.push_back(make_tool("x64dbg_modules", "Module enumeration and info", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_modules", "Module enumeration and info.", {
         make_action("list"),
         make_action("get", {{"name", str_field()}}, {"name"}),
         make_action("base", {{"name", str_field()}}, {"name"}),
         make_action("section", {{"address", str_field()}}, {"address"}),
         make_action("party", {{"base", str_field()}}, {"base"})
-    })));
+    }));
 
     // x64dbg_search
-    tools.push_back(make_tool("x64dbg_search", "Pattern/string/byte search in memory", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_search", "Pattern/string/byte search in memory.", {
         make_action("pattern", {{"pattern", str_field("Hex bytes, e.g. 'C4 CB ?? 5B'")}, {"base", str_field()}, {"size", int_field()}, {"max_results", int_field()}}, {"pattern"}),
         make_action("strings", {{"address", str_field()}, {"size", int_field()}}, {"address"}),
         make_action("string_at", {{"address", str_field()}}, {"address"}),
         make_action("autocomplete", {{"query", str_field()}}, {"query"}),
         make_action("find_strings_module", {{"module", str_field()}}, {"module"}),
         make_action("encoding", {{"address", str_field()}}, {"address"})
-    })));
+    }));
 
     // x64dbg_command
-    tools.push_back(make_tool("x64dbg_command", "Execute x64dbg commands and evaluate expressions", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_command", "Execute x64dbg commands and evaluate expressions.", {
         make_action("exec", {{"command", str_field()}}, {"command"}),
         make_action("eval", {{"expression", str_field()}}, {"expression"}),
         make_action("format", {{"format", str_field()}}, {"format"}),
@@ -195,10 +343,10 @@ json mcp_tools::build_tools_list() {
         make_action("get_init_script"),
         make_action("hash"),
         make_action("script", {{"commands", {{"type", "array"}, {"items", {{"type", "string"}}}}}}, {"commands"})
-    })));
+    }));
 
     // x64dbg_tracing
-    tools.push_back(make_tool("x64dbg_tracing", "Trace execution, recording, and conditional tracing", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_tracing", "Trace execution, recording, and conditional tracing.", {
         make_action("trace_into", {{"condition", str_field()}, {"max_steps", str_field()}, {"log_text", str_field()}}, {}),
         make_action("trace_over", {{"condition", str_field()}, {"max_steps", str_field()}, {"log_text", str_field()}}, {}),
         make_action("run_to_party", {{"party", str_field("0=user, 1=system")}}, {}),
@@ -209,10 +357,10 @@ json mcp_tools::build_tools_list() {
         make_action("animate", {{"command", str_field()}}, {"command"}),
         make_action("conditional_run", {{"type", str_enum({"into","over"})}, {"break_condition", str_field()}}, {}),
         make_action("log", {{"file", str_field()}, {"text", str_field()}}, {"file"})
-    })));
+    }));
 
     // x64dbg_dumping
-    tools.push_back(make_tool("x64dbg_dumping", "Module dumping, PE header parsing, imports/exports", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_dumping", "Module dumping, PE header parsing, imports/exports.", {
         make_action("dump_module", {{"module", str_field()}, {"file", str_field()}}, {"module"}),
         make_action("pe_header", {{"address", str_field()}}, {"address"}),
         make_action("sections", {{"module", str_field()}}, {"module"}),
@@ -222,19 +370,19 @@ json mcp_tools::build_tools_list() {
         make_action("relocations", {{"address", str_field()}}, {"address"}),
         make_action("export_patches", {{"filename", str_field()}}, {"filename"}),
         make_action("entry_point", {{"module", str_field()}}, {"module"})
-    })));
+    }));
 
     // x64dbg_exceptions
-    tools.push_back(make_tool("x64dbg_exceptions", "Exception breakpoint management", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_exceptions", "Exception breakpoint management.", {
         make_action("set_bp", {{"code", str_field()}, {"chance", str_enum({"first","second","all"})}}, {"code"}),
         make_action("delete_bp", {{"code", str_field()}}, {"code"}),
         make_action("list_bps"),
         make_action("list_codes"),
         make_action("skip")
-    })));
+    }));
 
     // x64dbg_controlflow
-    tools.push_back(make_tool("x64dbg_controlflow", "Control flow graph analysis, branch info, loops", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_controlflow", "Control flow graph analysis, branch info, loops.", {
         make_action("cfg", {{"address", str_field()}}, {"address"}),
         make_action("branch_dest", {{"address", str_field()}}, {"address"}),
         make_action("is_jump_taken", {{"address", str_field()}}, {"address"}),
@@ -242,48 +390,48 @@ json mcp_tools::build_tools_list() {
         make_action("add_function", {{"start", str_field()}, {"end", str_field()}}, {"start", "end"}),
         make_action("delete_function", {{"address", str_field()}}, {"address"}),
         make_action("func_type", {{"address", str_field()}}, {"address"})
-    })));
+    }));
 
     // x64dbg_patches
-    tools.push_back(make_tool("x64dbg_patches", "Byte patching and patch management", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_patches", "Byte patching and patch management.", {
         make_action("list"),
         make_action("apply", {{"address", str_field()}, {"bytes", str_field("Hex bytes")}}, {"address", "bytes"}),
         make_action("restore", {{"address", str_field()}}, {"address"}),
         make_action("export", {{"module", str_field()}, {"path", str_field()}}, {"path"})
-    })));
+    }));
 
     // x64dbg_annotations
-    tools.push_back(make_tool("x64dbg_annotations", "Labels, comments, and bookmarks", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_annotations", "Labels, comments, and bookmarks.", {
         make_action("get_label", {{"address", str_field()}}, {"address"}),
         make_action("set_label", {{"address", str_field()}, {"text", str_field()}}, {"address", "text"}),
         make_action("get_comment", {{"address", str_field()}}, {"address"}),
         make_action("set_comment", {{"address", str_field()}, {"text", str_field()}}, {"address", "text"}),
         make_action("set_bookmark", {{"address", str_field()}, {"set", bool_field()}}, {"address"})
-    })));
+    }));
 
     // x64dbg_memmap
-    tools.push_back(make_tool("x64dbg_memmap", "Memory map listing and region queries", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_memmap", "Memory map listing and region queries.", {
         make_action("list"),
         make_action("at", {{"address", str_field()}}, {"address"})
-    })));
+    }));
 
     // x64dbg_process
-    tools.push_back(make_tool("x64dbg_process", "Process info, command line, elevation status", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_process", "Process info, command line, elevation status.", {
         make_action("details"), make_action("cmdline"),
         make_action("set_cmdline", {{"cmdline", str_field()}}, {"cmdline"}),
         make_action("elevated"), make_action("dbversion")
-    })));
+    }));
 
     // x64dbg_handles
-    tools.push_back(make_tool("x64dbg_handles", "Handle, TCP connection, window, and heap enumeration", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_handles", "Handle, TCP connection, window, and heap enumeration.", {
         make_action("list"),
         make_action("get", {{"handle", str_field()}}, {"handle"}),
         make_action("tcp"), make_action("windows"), make_action("heaps"),
         make_action("close", {{"handle", str_field()}}, {"handle"})
-    })));
+    }));
 
     // x64dbg_analysis
-    tools.push_back(make_tool("x64dbg_analysis", "Function analysis, xrefs, basic blocks, constants, source mapping", oneOf_schema({
+    tools.push_back(make_mega_tool("x64dbg_analysis", "Function analysis, xrefs, basic blocks, constants, source mapping.", {
         make_action("function", {{"address", str_field()}}, {"address"}),
         make_action("xrefs_to", {{"address", str_field()}}, {"address"}),
         make_action("xrefs_from", {{"address", str_field()}}, {"address"}),
@@ -296,7 +444,7 @@ json mcp_tools::build_tools_list() {
         make_action("file_to_va", {{"module", str_field()}, {"offset", str_field()}}, {"module", "offset"}),
         make_action("mnemonic_brief", {{"mnemonic", str_field()}}, {"mnemonic"}),
         make_action("find_strings", {{"module", str_field()}}, {"module"})
-    })));
+    }));
 
     return tools;
 }
@@ -328,7 +476,7 @@ json mcp_tools::dispatch_tool_call(const std::string& tool, const json& args) {
         if (action == "avx512")   return handlers::registers::get_avx512();
     }
     else if (tool == "x64dbg_memory") {
-        if (action == "read")       return handlers::memory::read(args["address"], args.value("size", 256));
+        if (action == "read")       return handlers::memory::read(args["address"], parse_int_field<size_t>(args, "size", 256));
         if (action == "write")      return handlers::memory::write(args["address"], args["bytes"], args.value("verify", false));
         if (action == "is_valid")   return handlers::memory::is_valid(args["address"]);
         if (action == "page_info")  return handlers::memory::page_info(args["address"]);
@@ -355,8 +503,8 @@ json mcp_tools::dispatch_tool_call(const std::string& tool, const json& args) {
         if (action == "configure_batch") return handlers::breakpoints::configure_batch(args["breakpoints"]);
     }
     else if (tool == "x64dbg_disassembly") {
-        if (action == "at")       return handlers::disasm::at(args["address"], args.value("count", 10));
-        if (action == "function") return handlers::disasm::function(args["address"], args.value("max_instructions", 50));
+        if (action == "at")       return handlers::disasm::at(args["address"], parse_int_field<int>(args, "count", 10));
+        if (action == "function") return handlers::disasm::function(args["address"], parse_int_field<int>(args, "max_instructions", 50));
         if (action == "basic")    return handlers::disasm::basic(args["address"]);
         if (action == "assemble") return handlers::disasm::assemble(args["address"], args["instruction"]);
     }
@@ -368,7 +516,7 @@ json mcp_tools::dispatch_tool_call(const std::string& tool, const json& args) {
     }
     else if (tool == "x64dbg_stack") {
         if (action == "trace")            return handlers::stack::trace();
-        if (action == "read")             return handlers::stack::read(args.value("address", "csp"), args.value("size", 256));
+        if (action == "read")             return handlers::stack::read(args.value("address", "csp"), parse_int_field<size_t>(args, "size", 256));
         if (action == "pointers")         return handlers::stack::pointers();
         if (action == "comment")          return handlers::stack::comment(args["address"]);
         if (action == "callstack_thread") return handlers::stack::callstack_thread(args["handle"]);
@@ -378,13 +526,13 @@ json mcp_tools::dispatch_tool_call(const std::string& tool, const json& args) {
     else if (tool == "x64dbg_threads") {
         if (action == "list")    return handlers::threads::list();
         if (action == "current") return handlers::threads::current();
-        if (action == "get")     return handlers::threads::get_by_id(args["id"]);
-        if (action == "switch")  return handlers::threads::switch_thread(args["id"]);
-        if (action == "suspend") return handlers::threads::suspend(args["id"]);
-        if (action == "resume")  return handlers::threads::resume(args["id"]);
+        if (action == "get")     return handlers::threads::get_by_id(parse_int_as<uint32_t>(args["id"]));
+        if (action == "switch")  return handlers::threads::switch_thread(parse_int_as<uint32_t>(args["id"]));
+        if (action == "suspend") return handlers::threads::suspend(parse_int_as<uint32_t>(args["id"]));
+        if (action == "resume")  return handlers::threads::resume(parse_int_as<uint32_t>(args["id"]));
         if (action == "count")   return handlers::threads::count();
-        if (action == "teb")     return handlers::threads::teb(args["tid"]);
-        if (action == "name")    return handlers::threads::name(args["tid"]);
+        if (action == "teb")     return handlers::threads::teb(parse_int_as<uint32_t>(args["tid"]));
+        if (action == "name")    return handlers::threads::name(parse_int_as<uint32_t>(args["tid"]));
     }
     else if (tool == "x64dbg_modules") {
         if (action == "list")    return handlers::modules::list();
@@ -395,7 +543,7 @@ json mcp_tools::dispatch_tool_call(const std::string& tool, const json& args) {
     }
     else if (tool == "x64dbg_search") {
         if (action == "pattern")              return handlers::search::pattern(args);
-        if (action == "strings")              return handlers::search::strings(args["address"], args.value("size", 4096));
+        if (action == "strings")              return handlers::search::strings(args["address"], parse_int_field<size_t>(args, "size", 4096));
         if (action == "string_at")            return handlers::search::string_at(args["address"]);
         if (action == "autocomplete")         return handlers::search::autocomplete(args["query"]);
         if (action == "find_strings_module")  return handlers::search::find_strings_module(args["module"]);
@@ -422,7 +570,7 @@ json mcp_tools::dispatch_tool_call(const std::string& tool, const json& args) {
         if (action == "stop")            return handlers::tracing::stop_trace();
         if (action == "record_hitcount") return handlers::tracing::record_hitcount(args["address"]);
         if (action == "record_type")     return handlers::tracing::record_type(args["address"]);
-        if (action == "set_record_type") return handlers::tracing::set_record_type(args["address"], args["type"]);
+        if (action == "set_record_type") return handlers::tracing::set_record_type(args["address"], parse_int_as<int>(args["type"]));
         if (action == "animate")         return handlers::tracing::animate(args["command"]);
         if (action == "conditional_run") return handlers::tracing::conditional_run(args);
         if (action == "log")             return handlers::tracing::log_trace(args);
@@ -493,7 +641,7 @@ json mcp_tools::dispatch_tool_call(const std::string& tool, const json& args) {
         if (action == "basic_blocks")   return handlers::analysis::basic_blocks(args["address"]);
         if (action == "constants")      return handlers::analysis::constants();
         if (action == "error_codes")    return handlers::analysis::error_codes();
-        if (action == "watch")          return handlers::analysis::watch(args["id"]);
+        if (action == "watch")          return handlers::analysis::watch(parse_int_as<unsigned int>(args["id"]));
         if (action == "structs")        return handlers::analysis::structs();
         if (action == "source")         return handlers::analysis::source(args["address"]);
         if (action == "va_to_file")     return handlers::analysis::va_to_file(args["address"]);

@@ -95,9 +95,10 @@ nlohmann::json set_memory(const std::string& address, const std::string& type) {
 nlohmann::json delete_bp(const std::string& address, const std::string& type) {
     auto& bridge = get_bridge();
     bool ok;
-    if (type == "hardware") ok = bridge.exec_command("bphwc " + address);
+    if (type == "software") ok = bridge.exec_command("bc " + address);
+    else if (type == "hardware") ok = bridge.exec_command("bphwc " + address);
     else if (type == "memory") ok = bridge.exec_command("bpmc " + address);
-    else ok = bridge.exec_command("bc " + address);
+    else throw std::runtime_error("Invalid breakpoint type '" + type + "', expected: software, hardware, memory");
     if (!ok) throw std::runtime_error("Failed to delete breakpoint at " + address);
     return {{"address", address}, {"deleted", true}};
 }
@@ -145,6 +146,8 @@ nlohmann::json configure(const nlohmann::json& args) {
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
     auto address = args["address"].get<std::string>();
     auto bp_type = args.value("bp_type", "software");
+    if (bp_type != "software" && bp_type != "hardware" && bp_type != "memory")
+        throw std::runtime_error("Invalid bp_type '" + bp_type + "', expected: software, hardware, memory");
     bool setup_ok;
     if (bp_type == "hardware") {
         setup_ok = bridge.exec_command("bphws " + address + ", " + args.value("hw_type", "x") + ", " + args.value("hw_size", "1"));
@@ -173,6 +176,11 @@ nlohmann::json configure_batch(const nlohmann::json& breakpoints_array) {
         }
         auto address = entry["address"].get<std::string>();
         auto bp_type = entry.value("bp_type", "software");
+        if (bp_type != "software" && bp_type != "hardware" && bp_type != "memory") {
+            results.push_back({{"address", address}, {"error", "Invalid bp_type '" + bp_type + "'"}, {"success", false}});
+            ++failed;
+            continue;
+        }
         bool setup_ok;
         if (bp_type == "hardware")
             setup_ok = bridge.exec_command("bphws " + address + ", " + entry.value("hw_type", "x") + ", " + entry.value("hw_size", "1"));

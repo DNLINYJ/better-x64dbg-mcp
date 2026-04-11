@@ -76,6 +76,8 @@ nlohmann::json conditional_run(const nlohmann::json& args) {
     auto& bridge = get_bridge();
     if (!bridge.require_paused()) throw std::runtime_error("Debugger must be paused");
     auto trace_type = args.value("type", "into");
+    if (trace_type != "into" && trace_type != "over")
+        throw std::runtime_error("Invalid trace type '" + trace_type + "', expected: into, over");
     std::string cmd = (trace_type == "over") ? "TraceOverConditional" : "TraceIntoConditional";
     if (args.contains("break_condition") && !args["break_condition"].get<std::string>().empty())
         cmd += " " + args["break_condition"].get<std::string>();
