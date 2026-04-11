@@ -1,5 +1,7 @@
 # better-x64dbg-mcp
 
+中文 | [English](README.md)
+
 改进版 x64dbg MCP (Model Context Protocol) 插件，基于 [@bromoket](https://github.com/bromoket) 的 [x64dbg_mcp](https://github.com/bromoket/x64dbg_mcp) 重构。
 
 原项目采用两层架构——TypeScript MCP 服务器通过 HTTP 与 C++ x64dbg 插件通信。本项目**将两层合并为单个 C++ DLL**，直接在 x64dbg 内实现 [MCP Streamable HTTP 传输协议](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)。

@@ -1,5 +1,7 @@
 # better-x64dbg-mcp
 
+[中文](README_CN.md) | English
+
 An improved x64dbg MCP (Model Context Protocol) plugin, rebuilt from [x64dbg_mcp](https://github.com/bromoket/x64dbg_mcp) by [@bromoket](https://github.com/bromoket).
 
 The original project uses a two-layer architecture — a TypeScript MCP server communicating with a C++ x64dbg plugin via HTTP. This project **replaces both layers with a single C++ DLL** that implements the [MCP Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) directly inside x64dbg.
