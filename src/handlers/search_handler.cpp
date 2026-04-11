@@ -3,6 +3,11 @@
 #include "util/format_utils.h"
 #include "bridgemain.h"
 #include "_dbgfunctions.h"
+#include "_scriptapi_symbol.h"
+#include "bridgelist.h"
+
+#include <algorithm>
+#include <cctype>
 
 namespace handlers::search {
 
@@ -121,8 +126,31 @@ nlohmann::json string_at(const std::string& address_str) {
 nlohmann::json autocomplete(const std::string& query) {
     auto& bridge = get_bridge();
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
-    bridge.exec_command("symfind " + query);
-    return {{"query", query}, {"message", "Results in symbol view"}};
+
+    BridgeList<Script::Symbol::SymbolInfo> symbols;
+    if (!Script::Symbol::GetList(&symbols))
+        return {{"query", query}, {"results", nlohmann::json::array()}, {"count", 0}};
+
+    // Case-insensitive substring match
+    std::string query_lower = query;
+    std::transform(query_lower.begin(), query_lower.end(), query_lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    auto results = nlohmann::json::array();
+    constexpr int MAX_RESULTS = 100;
+    for (int i = 0; i < symbols.Count() && static_cast<int>(results.size()) < MAX_RESULTS; ++i) {
+        const auto& sym = symbols[i];
+        std::string name_lower = sym.name;
+        std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (name_lower.find(query_lower) != std::string::npos) {
+            results.push_back({
+                {"name", sym.name},
+                {"module", sym.mod},
+                {"rva", format_utils::format_address(sym.rva)},
+                {"type", sym.type == Script::Symbol::Function ? "function" : sym.type == Script::Symbol::Import ? "import" : "export"}
+            });
+        }
+    }
+    return {{"query", query}, {"results", results}, {"count", results.size()}};
 }
 
 nlohmann::json find_strings_module(const std::string& module) {

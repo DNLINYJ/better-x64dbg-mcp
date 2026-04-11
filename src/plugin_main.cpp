@@ -7,6 +7,7 @@
 #include "resources/plugin_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/about_dialog.h"
+#include "handlers/debug_handler.h"
 
 // Globals
 static int g_plugin_handle = -1;
@@ -236,10 +237,21 @@ PLUG_EXPORT void CBSTEPPED(CBTYPE, void* info) {
 
 PLUG_EXPORT void CBSTOPDEBUG(CBTYPE, void* info) {
     g_events.on_stop_debug(static_cast<PLUG_CB_STOPDEBUG*>(info));
+    handlers::debug::clear_launch_state();
+}
+
+PLUG_EXPORT void CBINITDEBUG(CBTYPE, void* info) {
+    auto* init = static_cast<PLUG_CB_INITDEBUG*>(info);
+    if (init) handlers::debug::capture_launch_target(init->szFileName);
+}
+
+PLUG_EXPORT void CBATTACH(CBTYPE, void*) {
+    handlers::debug::mark_attached();
 }
 
 PLUG_EXPORT void CBCREATEPROCESS(CBTYPE, void* info) {
     g_events.on_create_process(static_cast<PLUG_CB_CREATEPROCESS*>(info));
+    handlers::debug::capture_launch_cwd();
 }
 
 PLUG_EXPORT void CBEXITPROCESS(CBTYPE, void* info) {

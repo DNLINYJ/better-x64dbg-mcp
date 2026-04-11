@@ -1,14 +1,29 @@
 #include "handlers/patch_handler.h"
 #include "bridge/c_bridge_executor.h"
 #include "util/format_utils.h"
+#include "bridgemain.h"
+#include "_dbgfunctions.h"
 
 namespace handlers::patches {
 
 nlohmann::json list() {
     auto& bridge = get_bridge();
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
-    bridge.exec_command("patchlist");
-    return {{"message", "Patch list displayed in x64dbg log."}};
+    size_t count = 0;
+    DbgFunctions()->PatchEnum(nullptr, &count);
+    if (count == 0) return {{"patches", nlohmann::json::array()}, {"count", 0}};
+    std::vector<DBGPATCHINFO> patches(count);
+    DbgFunctions()->PatchEnum(patches.data(), &count);
+    auto result = nlohmann::json::array();
+    for (size_t i = 0; i < count; ++i) {
+        result.push_back({
+            {"address", format_utils::format_address(patches[i].addr)},
+            {"module", patches[i].mod},
+            {"original_byte", format_utils::format_bytes_hex(&patches[i].oldbyte, 1)},
+            {"patched_byte", format_utils::format_bytes_hex(&patches[i].newbyte, 1)}
+        });
+    }
+    return {{"patches", result}, {"count", result.size()}};
 }
 
 nlohmann::json apply(const std::string& address_str, const std::string& hex_str) {
@@ -28,8 +43,13 @@ nlohmann::json apply(const std::string& address_str, const std::string& hex_str)
 }
 
 nlohmann::json restore(const std::string& address) {
-    get_bridge().exec_command("patchrestore " + address);
-    return {{"address", address}, {"message", "Patch restore requested"}};
+    auto& bridge = get_bridge();
+    if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
+    auto addr = bridge.eval_expression(address);
+    if (!DbgFunctions()->PatchRestore(addr))
+        throw std::runtime_error("Failed to restore patch at " + address);
+    GuiUpdatePatches();
+    return {{"address", format_utils::format_address(addr)}, {"restored", true}};
 }
 
 nlohmann::json export_module(const std::string& module_name, const std::string& path) {

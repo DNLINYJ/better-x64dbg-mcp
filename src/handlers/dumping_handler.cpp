@@ -4,6 +4,7 @@
 #include "bridgemain.h"
 #include "_dbgfunctions.h"
 #include "bridgelist.h"
+#include "_scriptapi_module.h"
 
 namespace handlers::dumping {
 
@@ -87,8 +88,30 @@ nlohmann::json imports(const std::string& module_name) {
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
     auto base = bridge.get_module_base(module_name);
     if (base == 0) throw std::runtime_error("Module not found: " + module_name);
-    bridge.exec_command("modimports " + format_utils::format_address(base));
-    return {{"module", module_name}, {"base", format_utils::format_address(base)}, {"message", "Import table displayed in references view"}};
+
+    Script::Module::ModuleInfo mod_info{};
+    if (!Script::Module::InfoFromAddr(base, &mod_info))
+        throw std::runtime_error("Failed to get module info for " + module_name);
+
+    BridgeList<Script::Module::ModuleImport> import_list;
+    if (!Script::Module::GetImports(&mod_info, &import_list))
+        return {{"module", module_name}, {"base", format_utils::format_address(base)}, {"imports", nlohmann::json::array()}, {"count", 0}};
+
+    auto result = nlohmann::json::array();
+    for (int i = 0; i < import_list.Count(); ++i) {
+        const auto& imp = import_list[i];
+        nlohmann::json entry = {
+            {"name", imp.name},
+            {"iat_rva", format_utils::format_address(imp.iatRva)},
+            {"iat_va", format_utils::format_address(imp.iatVa)}
+        };
+        if (imp.ordinal != static_cast<duint>(-1))
+            entry["ordinal"] = imp.ordinal;
+        if (imp.undecoratedName[0] != '\0')
+            entry["undecorated_name"] = imp.undecoratedName;
+        result.push_back(entry);
+    }
+    return {{"module", module_name}, {"base", format_utils::format_address(base)}, {"imports", result}, {"count", result.size()}};
 }
 
 nlohmann::json exports(const std::string& module_name) {
@@ -96,8 +119,31 @@ nlohmann::json exports(const std::string& module_name) {
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
     auto base = bridge.get_module_base(module_name);
     if (base == 0) throw std::runtime_error("Module not found: " + module_name);
-    bridge.exec_command("modexports " + format_utils::format_address(base));
-    return {{"module", module_name}, {"base", format_utils::format_address(base)}, {"message", "Export table displayed in references view"}};
+
+    Script::Module::ModuleInfo mod_info{};
+    if (!Script::Module::InfoFromAddr(base, &mod_info))
+        throw std::runtime_error("Failed to get module info for " + module_name);
+
+    BridgeList<Script::Module::ModuleExport> export_list;
+    if (!Script::Module::GetExports(&mod_info, &export_list))
+        return {{"module", module_name}, {"base", format_utils::format_address(base)}, {"exports", nlohmann::json::array()}, {"count", 0}};
+
+    auto result = nlohmann::json::array();
+    for (int i = 0; i < export_list.Count(); ++i) {
+        const auto& exp = export_list[i];
+        nlohmann::json entry = {
+            {"name", exp.name},
+            {"ordinal", exp.ordinal},
+            {"rva", format_utils::format_address(exp.rva)},
+            {"va", format_utils::format_address(exp.va)}
+        };
+        if (exp.forwarded)
+            entry["forward"] = exp.forwardName;
+        if (exp.undecoratedName[0] != '\0')
+            entry["undecorated_name"] = exp.undecoratedName;
+        result.push_back(entry);
+    }
+    return {{"module", module_name}, {"base", format_utils::format_address(base)}, {"exports", result}, {"count", result.size()}};
 }
 
 nlohmann::json fix_iat(const std::string& oep) {

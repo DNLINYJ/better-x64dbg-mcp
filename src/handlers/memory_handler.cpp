@@ -88,8 +88,19 @@ nlohmann::json free_mem(const std::string& address) {
 nlohmann::json protect(const std::string& address, const std::string& size, const std::string& protection) {
     auto& bridge = get_bridge();
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
-    bridge.exec_command("VirtualProtect " + address + ", " + size + ", " + protection);
-    return {{"address", address}, {"size", size}, {"protection", protection}};
+    auto addr = bridge.eval_expression(address);
+    auto len = bridge.eval_expression(size);
+    // setpagerights operates on the page containing the address; align to page boundaries
+    constexpr duint page_granularity = 0x1000;
+    duint page_start = addr & ~(page_granularity - 1);
+    duint page_end = (addr + (std::max)(len, static_cast<duint>(1)) + page_granularity - 1) & ~(page_granularity - 1);
+    int pages_changed = 0;
+    for (duint page = page_start; page < page_end; page += page_granularity) {
+        if (!bridge.exec_command("setpagerights " + format_utils::format_address(page) + ", " + protection))
+            throw std::runtime_error("Failed to set page rights at " + format_utils::format_address(page));
+        ++pages_changed;
+    }
+    return {{"address", format_utils::format_address(addr)}, {"size", format_utils::format_hex(len)}, {"protection", protection}, {"pages_changed", pages_changed}};
 }
 
 nlohmann::json is_code(const std::string& address_str) {

@@ -1,6 +1,8 @@
 #include "handlers/breakpoint_handler.h"
 #include "bridge/c_bridge_executor.h"
 #include "util/format_utils.h"
+#include "bridgemain.h"
+#include "_dbgfunctions.h"
 
 namespace handlers::breakpoints {
 
@@ -118,9 +120,18 @@ nlohmann::json disable(const std::string& address) {
 nlohmann::json toggle(const std::string& address) {
     auto& bridge = get_bridge();
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
-    if (!bridge.exec_command("bptoggle " + address))
+    auto addr = bridge.eval_expression(address);
+    // Try each breakpoint type to find the one at this address
+    BRIDGEBP bp{};
+    bool found = false;
+    for (auto type : {bp_normal, bp_hardware, bp_memory}) {
+        if (DbgFunctions()->GetBridgeBp(type, addr, &bp)) { found = true; break; }
+    }
+    if (!found) throw std::runtime_error("No breakpoint at " + address);
+    bool new_enabled = !bp.enabled;
+    if (!bridge.exec_command((new_enabled ? "bpe " : "bpd ") + address))
         throw std::runtime_error("Failed to toggle breakpoint at " + address);
-    return {{"address", address}, {"toggled", true}};
+    return {{"address", address}, {"enabled", new_enabled}};
 }
 
 nlohmann::json set_condition(const std::string& address, const std::string& condition) {
