@@ -6,6 +6,7 @@
 #include <vector>
 #include <random>
 #include <atomic>
+#include <memory>
 
 #include <winsock2.h>
 #include <nlohmann/json.hpp>
@@ -48,9 +49,17 @@ public:
     [[nodiscard]] bool is_initialized(const std::string& session_id) const;
 
 private:
+    // Per-SSE-connection state with its own mutex.
+    // This allows broadcast_event to release the global session mutex before
+    // sending, preventing a stalled SSE client from blocking session operations.
+    struct s_sse_connection {
+        std::mutex mutex;
+        SOCKET socket = INVALID_SOCKET;
+    };
+
     struct s_session {
         std::string id;
-        SOCKET sse_socket = INVALID_SOCKET;
+        std::shared_ptr<s_sse_connection> sse_conn;
         bool initialized = false;
     };
 

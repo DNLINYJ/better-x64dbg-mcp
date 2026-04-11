@@ -19,47 +19,79 @@ bool c_mcp_session::has_session(const std::string& session_id) const {
 }
 
 void c_mcp_session::delete_session(const std::string& session_id) {
-    std::lock_guard lock(m_mutex);
-    auto it = m_sessions.find(session_id);
-    if (it == m_sessions.end()) return;
-    if (it->second.sse_socket != INVALID_SOCKET) {
-        closesocket(it->second.sse_socket);
+    std::shared_ptr<s_sse_connection> conn;
+    {
+        std::lock_guard lock(m_mutex);
+        auto it = m_sessions.find(session_id);
+        if (it == m_sessions.end()) return;
+        conn = it->second.sse_conn;
+        m_sessions.erase(it);
     }
-    m_sessions.erase(it);
+    if (conn) {
+        std::lock_guard conn_lock(conn->mutex);
+        if (conn->socket != INVALID_SOCKET) {
+            closesocket(conn->socket);
+            conn->socket = INVALID_SOCKET;
+        }
+    }
 }
 
 void c_mcp_session::register_sse(const std::string& session_id, SOCKET sock) {
-    std::lock_guard lock(m_mutex);
-    auto it = m_sessions.find(session_id);
-    if (it == m_sessions.end()) return;
-    if (it->second.sse_socket != INVALID_SOCKET) {
-        closesocket(it->second.sse_socket);
+    std::shared_ptr<s_sse_connection> old_conn;
+    {
+        std::lock_guard lock(m_mutex);
+        auto it = m_sessions.find(session_id);
+        if (it == m_sessions.end()) return;
+        old_conn = it->second.sse_conn;
+        auto new_conn = std::make_shared<s_sse_connection>();
+        new_conn->socket = sock;
+        it->second.sse_conn = new_conn;
     }
-    it->second.sse_socket = sock;
+    if (old_conn) {
+        std::lock_guard conn_lock(old_conn->mutex);
+        if (old_conn->socket != INVALID_SOCKET) {
+            closesocket(old_conn->socket);
+            old_conn->socket = INVALID_SOCKET;
+        }
+    }
 }
 
 void c_mcp_session::unregister_sse(const std::string& session_id) {
-    std::lock_guard lock(m_mutex);
-    auto it = m_sessions.find(session_id);
-    if (it == m_sessions.end()) return;
-    if (it->second.sse_socket != INVALID_SOCKET) {
-        closesocket(it->second.sse_socket);
-        it->second.sse_socket = INVALID_SOCKET;
+    std::shared_ptr<s_sse_connection> conn;
+    {
+        std::lock_guard lock(m_mutex);
+        auto it = m_sessions.find(session_id);
+        if (it == m_sessions.end()) return;
+        conn = it->second.sse_conn;
+        it->second.sse_conn.reset();
+    }
+    if (conn) {
+        std::lock_guard conn_lock(conn->mutex);
+        if (conn->socket != INVALID_SOCKET) {
+            closesocket(conn->socket);
+            conn->socket = INVALID_SOCKET;
+        }
     }
 }
 
 void c_mcp_session::broadcast_event(const nlohmann::json& notification) {
-    // Hold lock during sends to prevent TOCTOU race: without this, a socket handle
-    // could be closed by unregister_sse() and reused by the OS for a different socket
-    // between the snapshot and the send, causing data to be sent to the wrong client.
-    // SSE messages are small and sockets have send timeouts, so contention is bounded.
     auto payload = notification.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    std::lock_guard lock(m_mutex);
-    for (auto& [id, session] : m_sessions) {
-        if (session.sse_socket != INVALID_SOCKET) {
-            if (!send_sse_data(session.sse_socket, payload)) {
-                closesocket(session.sse_socket);
-                session.sse_socket = INVALID_SOCKET;
+    // Snapshot connection shared_ptrs under the global lock (fast), then release.
+    // Each send is serialized by the per-connection mutex, so a stalled client
+    // only blocks its own send, not session operations or other clients.
+    std::vector<std::shared_ptr<s_sse_connection>> connections;
+    {
+        std::lock_guard lock(m_mutex);
+        for (auto& [id, session] : m_sessions) {
+            if (session.sse_conn) connections.push_back(session.sse_conn);
+        }
+    }
+    for (auto& conn : connections) {
+        std::lock_guard conn_lock(conn->mutex);
+        if (conn->socket != INVALID_SOCKET) {
+            if (!send_sse_data(conn->socket, payload)) {
+                closesocket(conn->socket);
+                conn->socket = INVALID_SOCKET;
             }
         }
     }
@@ -67,25 +99,39 @@ void c_mcp_session::broadcast_event(const nlohmann::json& notification) {
 
 void c_mcp_session::push_event(const std::string& session_id, const nlohmann::json& notification) {
     auto payload = notification.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    std::lock_guard lock(m_mutex);
-    auto it = m_sessions.find(session_id);
-    if (it == m_sessions.end()) return;
-    if (it->second.sse_socket == INVALID_SOCKET) return;
-    if (!send_sse_data(it->second.sse_socket, payload)) {
-        closesocket(it->second.sse_socket);
-        it->second.sse_socket = INVALID_SOCKET;
+    std::shared_ptr<s_sse_connection> conn;
+    {
+        std::lock_guard lock(m_mutex);
+        auto it = m_sessions.find(session_id);
+        if (it == m_sessions.end()) return;
+        conn = it->second.sse_conn;
+    }
+    if (!conn) return;
+    std::lock_guard conn_lock(conn->mutex);
+    if (conn->socket != INVALID_SOCKET) {
+        if (!send_sse_data(conn->socket, payload)) {
+            closesocket(conn->socket);
+            conn->socket = INVALID_SOCKET;
+        }
     }
 }
 
 void c_mcp_session::close_all() {
-    std::lock_guard lock(m_mutex);
-    for (auto& [id, session] : m_sessions) {
-        if (session.sse_socket != INVALID_SOCKET) {
-            closesocket(session.sse_socket);
-            session.sse_socket = INVALID_SOCKET;
+    std::vector<std::shared_ptr<s_sse_connection>> connections;
+    {
+        std::lock_guard lock(m_mutex);
+        for (auto& [id, session] : m_sessions) {
+            if (session.sse_conn) connections.push_back(session.sse_conn);
+        }
+        m_sessions.clear();
+    }
+    for (auto& conn : connections) {
+        std::lock_guard conn_lock(conn->mutex);
+        if (conn->socket != INVALID_SOCKET) {
+            closesocket(conn->socket);
+            conn->socket = INVALID_SOCKET;
         }
     }
-    m_sessions.clear();
 }
 
 void c_mcp_session::mark_initialized(const std::string& session_id) {

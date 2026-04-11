@@ -107,14 +107,21 @@ void c_http_server::listener_loop() {
             continue;
         }
 
-        std::thread(&c_http_server::handle_connection, this, client).detach();
+        // Increment BEFORE spawning to prevent stop() from completing while the
+        // worker thread is still starting up.
+        m_active_connections.fetch_add(1);
+        try {
+            std::thread(&c_http_server::handle_connection, this, client).detach();
+        } catch (...) {
+            m_active_connections.fetch_sub(1);
+            closesocket(client);
+        }
     }
 }
 
 void c_http_server::handle_connection(SOCKET client_socket) {
-    // Track active connections for graceful shutdown and concurrency limiting.
-    // The guard decrements the counter and notifies stop() when this thread exits.
-    m_active_connections.fetch_add(1);
+    // Counter was already incremented by listener_loop before this thread was spawned.
+    // The guard decrements it and notifies stop() when this thread exits.
     struct s_conn_guard {
         c_http_server& server;
         ~s_conn_guard() {
