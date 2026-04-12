@@ -41,21 +41,45 @@ nlohmann::json get_by_id(uint32_t tid) {
 nlohmann::json switch_thread(uint32_t tid) {
     auto& bridge = get_bridge();
     if (!bridge.require_paused()) throw std::runtime_error("Debugger must be paused");
-    bridge.exec_command("switchthread " + std::to_string(tid));
+    auto list = bridge.get_thread_list();
+    if (!list.has_value()) throw std::runtime_error(list.error());
+    bool found = false;
+    for (const auto& t : list.value()["threads"]) {
+        if (t["id"].get<DWORD>() == tid) { found = true; break; }
+    }
+    if (!found) throw std::runtime_error("Thread not found: " + std::to_string(tid));
+    if (!bridge.exec_command("switchthread " + std::to_string(tid)))
+        throw std::runtime_error("switchthread command failed for TID " + std::to_string(tid));
     return {{"switched_to", tid}, {"message", "Switched to thread " + std::to_string(tid)}};
 }
 
 nlohmann::json suspend(uint32_t tid) {
     auto& bridge = get_bridge();
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
-    bridge.exec_command("suspendthread " + std::to_string(tid));
+    auto list = bridge.get_thread_list();
+    if (!list.has_value()) throw std::runtime_error(list.error());
+    bool found = false;
+    for (const auto& t : list.value()["threads"]) {
+        if (t["id"].get<DWORD>() == tid) { found = true; break; }
+    }
+    if (!found) throw std::runtime_error("Thread not found: " + std::to_string(tid));
+    if (!bridge.exec_command("suspendthread " + std::to_string(tid)))
+        throw std::runtime_error("suspendthread command failed for TID " + std::to_string(tid));
     return {{"id", tid}, {"suspended", true}};
 }
 
 nlohmann::json resume(uint32_t tid) {
     auto& bridge = get_bridge();
     if (!bridge.require_debugging()) throw std::runtime_error("No active debug session");
-    bridge.exec_command("resumethread " + std::to_string(tid));
+    auto list = bridge.get_thread_list();
+    if (!list.has_value()) throw std::runtime_error(list.error());
+    bool found = false;
+    for (const auto& t : list.value()["threads"]) {
+        if (t["id"].get<DWORD>() == tid) { found = true; break; }
+    }
+    if (!found) throw std::runtime_error("Thread not found: " + std::to_string(tid));
+    if (!bridge.exec_command("resumethread " + std::to_string(tid)))
+        throw std::runtime_error("resumethread command failed for TID " + std::to_string(tid));
     return {{"id", tid}, {"resumed", true}};
 }
 
