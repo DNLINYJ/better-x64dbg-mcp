@@ -1,6 +1,7 @@
 #include "mcp/c_mcp_events.h"
 #include "bridge/c_bridge_executor.h"
 #include "util/format_utils.h"
+#include "_dbgfunctions.h"
 
 #include <chrono>
 #include <ctime>
@@ -55,6 +56,89 @@ void c_mcp_events::enqueue(nlohmann::json event) {
     m_queue_cv.notify_one();
 }
 
+// Snapshot of the current thread's Cycles counter — used to detect whether the
+// debuggee thread ran between CB_BREAKPOINT and CB_PAUSEDEBUG. Cycles comes from
+// QueryThreadCycleTime (Win7+), has nanosecond-scale granularity, and only
+// advances when the thread actually executes code. For a real CB_BREAKPOINT →
+// CB_PAUSEDEBUG pair, the thread is suspended the whole time and Cycles is
+// unchanged; for a skipped BP followed by a manual pause, Cycles advances.
+struct thread_cycle_snapshot {
+    DWORD   thread_id = 0;
+    ULONG64 cycles    = 0;
+    bool    valid     = false;
+};
+
+static thread_cycle_snapshot snapshot_current_thread_cycles() {
+    THREADLIST list = {};
+    DbgGetThreadList(&list);
+    thread_cycle_snapshot snap;
+    if (list.list && list.count > 0
+        && list.CurrentThread >= 0
+        && list.CurrentThread < list.count) {
+        const auto& t = list.list[list.CurrentThread];
+        snap.thread_id = t.BasicInfo.ThreadId;
+        snap.cycles    = t.Cycles;
+        snap.valid     = true;
+    }
+    if (list.list) BridgeFree(list.list);
+    return snap;
+}
+
+static const char* bp_type_name(BPXTYPE t) {
+    switch (t) {
+        case bp_normal:    return "software";
+        case bp_hardware:  return "hardware";
+        case bp_memory:    return "memory";
+        case bp_dll:       return "dll";
+        case bp_exception: return "exception";
+        default:           return "unknown";
+    }
+}
+
+// Evaluate the breakpoint's log text exactly as x64dbg does at hit time (see
+// reference/x64dbg/src/dbg/debugger.cpp:934-1046):
+//   - logCondition is evaluated first; an evaluation error FORCES logging
+//     (x64dbg treats eval failure as "log anyway"), a numeric 0 suppresses it
+//   - logText is formatted via StringFormatInline BEFORE commandText runs, so
+//     commandText-induced register/memory changes are not visible here
+// Must be called from on_breakpoint() — calling it later (e.g. from on_pause)
+// would observe post-commandText state and diverge from the actual log line.
+static nlohmann::json evaluate_bp_log_fields(const BRIDGEBP& bp) {
+    nlohmann::json out = nlohmann::json::object();
+    if (bp.logText[0] == '\0') return out;
+
+    bool should_log = true;
+    if (bp.logCondition[0] != '\0') {
+        duint cond_val = 0;
+        bool ok = DbgFunctions()->ValFromString(bp.logCondition, &cond_val);
+        should_log = !ok || (cond_val != 0);
+    }
+    if (!should_log) return out;
+
+    char evaluated[2048] = {};
+    if (DbgFunctions()->StringFormatInline(bp.logText, sizeof(evaluated), evaluated))
+        out["log"] = std::string(evaluated);
+    else
+        out["log_raw"] = std::string(bp.logText);
+    return out;
+}
+
+// Build breakpoint reason details JSON. Log fields (if any) are captured at
+// CB_BREAKPOINT time and passed in via `log_fields` — do NOT re-evaluate here.
+static nlohmann::json build_bp_details(const BRIDGEBP& bp, const nlohmann::json& log_fields) {
+    nlohmann::json details = {
+        {"type",      bp_type_name(bp.type)},
+        {"address",   format_utils::format_address(bp.addr)},
+        {"name",      std::string(bp.name)},
+        {"module",    std::string(bp.mod)},
+        {"hit_count", bp.hitCount}
+    };
+    for (auto it = log_fields.begin(); it != log_fields.end(); ++it) {
+        details[it.key()] = it.value();
+    }
+    return details;
+}
+
 void c_mcp_events::on_breakpoint(PLUG_CB_BREAKPOINT* info) {
     if (!info) return;
     nlohmann::json event = {
@@ -71,9 +155,97 @@ void c_mcp_events::on_breakpoint(PLUG_CB_BREAKPOINT* info) {
         }}
     };
     enqueue(std::move(event));
+
+    // Refresh the pending cache on every CB_BREAKPOINT — so a run of
+    // condition=false skips followed by a real pause leaves the cache
+    // describing the most recent (actually-paused) hit. on_pause() uses
+    // CIP + thread-cycles equality to tell "the last cached hit is the
+    // one that produced this pause" from "the last cached hit was skipped
+    // and something else caused this pause". A skip-counter is not needed:
+    // both signals are refreshed per-hit and the validation still holds.
+    //
+    // NOTE: we do NOT pre-evaluate breakCondition — commandText can rewrite
+    // $breakpointcondition after this callback, and an eval error forces a
+    // break even when the expression looks false.
+    m_pending_bp          = *info->breakpoint;
+    m_pending_cip         = get_bridge().eval_expression("cip");
+    m_pending_log_fields  = evaluate_bp_log_fields(*info->breakpoint);
+    auto snap             = snapshot_current_thread_cycles();
+    m_pending_thread_id     = snap.valid ? snap.thread_id : 0;
+    m_pending_thread_cycles = snap.valid ? snap.cycles    : 0;
+    m_last_was_breakpoint = true;
 }
 
 void c_mcp_events::on_pause(PLUG_CB_PAUSEDEBUG* /*info*/) {
+    // Callback order (from x64dbg source debugger.cpp):
+    //   All BP types  : CB_BREAKPOINT → CB_PAUSEDEBUG  (m_last_was_breakpoint consumed here)
+    //   Steps         : CB_PAUSEDEBUG → CB_STEPPED      (on_stepped overrides "unknown" below)
+    //   Exceptions    : CB_PAUSEDEBUG → CB_EXCEPTION    (on_exception overrides "unknown" below)
+    //   Manual pause  : CB_PAUSEDEBUG only
+    //   DLL event pause     : CB_PAUSEDEBUG only   (pauses from load/unload options)
+    //   DebugString pause   : CB_PAUSEDEBUG only
+    //   loadlib pause       : CB_PAUSEDEBUG only
+    //
+    // CB_PAUSEDEBUG by itself does NOT imply a user-initiated pause, so the
+    // fallback reason is "unknown", not "manual" — a client that treats
+    // "manual" as "safe to auto-resume" would mishandle the DLL/DebugString/
+    // loadlib event pauses. Only on_stepped / on_exception / the BP branch
+    // below positively identify their cases.
+
+    auto& bridge = get_bridge();
+    duint cip = bridge.eval_expression("cip");
+
+    // Trust pending only if ALL of:
+    //  - some CB_BREAKPOINT fired since the last clear (m_last_was_breakpoint)
+    //  - the BP has no commandText: x64dbg runs commandText between
+    //    CB_BREAKPOINT and the real CB_PAUSEDEBUG, and some commands (loadlib,
+    //    pause, others) fire a nested CB_PAUSEDEBUG during their execution.
+    //    cip+cycles can prove the original thread didn't run past the BP, but
+    //    cannot prove this CB_PAUSEDEBUG is the BP's own pause rather than one
+    //    triggered inside the command. Rejecting commandText-bearing BPs
+    //    avoids misattributing those nested pauses; users still receive the
+    //    breakpoint-hit SSE notification from on_breakpoint().
+    //  - CIP is unchanged since that CB_BREAKPOINT
+    //  - debuggee thread did not execute between: same thread id AND Cycles
+    //    counter unchanged. Cycles (QueryThreadCycleTime) advances at
+    //    nanosecond scale whenever the thread runs, so this catches every
+    //    "skip → thread executed → something else paused" path, including
+    //    x64dbg's `pause` command which goes SuspendThread → SetBPX(CIP,
+    //    cbPauseBreakpoint) → ResumeThread and never fires CB_BREAKPOINT or
+    //    CB_CREATETHREAD. Because both cip and cycles are refreshed on every
+    //    CB_BREAKPOINT, a run of condition=false skips followed by a real
+    //    pause at the same BP still validates correctly.
+    //
+    // No CIP-lookup fallback: looking up "is there an enabled BP at CIP" at
+    // pause time cannot tell a real BP hit from a manual pause that happens to
+    // land on a BP address.
+    auto now_snap = snapshot_current_thread_cycles();
+    bool thread_ran = !now_snap.valid
+                   || now_snap.thread_id != m_pending_thread_id
+                   || now_snap.cycles    != m_pending_thread_cycles;
+    bool has_command_text = m_pending_bp.commandText[0] != '\0';
+
+    bool use_pending = m_last_was_breakpoint
+                    && !has_command_text
+                    && (m_pending_cip == cip)
+                    && !thread_ran;
+    m_last_was_breakpoint = false;
+
+    if (use_pending) {
+        std::lock_guard lock(m_pause_mutex);
+        m_pause_reason_type    = "breakpoint";
+        m_pause_reason_details = build_bp_details(m_pending_bp, m_pending_log_fields);
+    } else {
+        // on_stepped/on_exception will override if this was actually a step
+        // or an exception pause. Otherwise the cause is one of: user manual
+        // pause, DLL load/unload event pause, DebugString event pause, or
+        // loadlib pause — we can't positively distinguish these from plugin
+        // callbacks alone, so report "unknown" rather than guessing "manual".
+        std::lock_guard lock(m_pause_mutex);
+        m_pause_reason_type    = "unknown";
+        m_pause_reason_details = nlohmann::json::object();
+    }
+
     nlohmann::json event = {
         {"jsonrpc", "2.0"},
         {"method", "notifications/x64dbg/paused"},
@@ -83,6 +255,7 @@ void c_mcp_events::on_pause(PLUG_CB_PAUSEDEBUG* /*info*/) {
 }
 
 void c_mcp_events::on_exception(PLUG_CB_EXCEPTION* info) {
+    m_last_was_breakpoint = false;
     if (!info) return;
     const auto& exc = info->Exception->ExceptionRecord;
     bool first_chance = info->Exception->dwFirstChance != 0;
@@ -92,6 +265,21 @@ void c_mcp_events::on_exception(PLUG_CB_EXCEPTION* info) {
     // (e.g. C++ throw/catch, SEH) and do not indicate a crash.
     if (!first_chance) {
         capture_crash_context(exc, first_chance);
+    }
+
+    // CB_EXCEPTION fires after CB_PAUSEDEBUG (x64dbg source: debugger.cpp).
+    // Update m_pause_reason BEFORE enqueueing the SSE event so that any client
+    // that polls state() immediately after receiving the notification sees the
+    // correct reason rather than the "unknown" baseline set by on_pause().
+    {
+        std::lock_guard lock(m_pause_mutex);
+        m_pause_reason_type = "exception";
+        m_pause_reason_details = {
+            {"code",         format_utils::format_address(exc.ExceptionCode)},
+            {"name",         exception_code_to_name(exc.ExceptionCode)},
+            {"address",      format_utils::format_address(reinterpret_cast<duint>(exc.ExceptionAddress))},
+            {"first_chance", first_chance}
+        };
     }
 
     nlohmann::json event = {
@@ -108,6 +296,17 @@ void c_mcp_events::on_exception(PLUG_CB_EXCEPTION* info) {
 }
 
 void c_mcp_events::on_stepped(PLUG_CB_STEPPED* /*info*/) {
+    m_last_was_breakpoint = false;
+    // CB_STEPPED fires after CB_PAUSEDEBUG (x64dbg source: debugger.cpp).
+    // Update m_pause_reason BEFORE enqueueing the SSE event so that any client
+    // that polls state() immediately after receiving the notification sees the
+    // correct reason rather than the "unknown" baseline set by on_pause().
+    {
+        std::lock_guard lock(m_pause_mutex);
+        m_pause_reason_type    = "step";
+        m_pause_reason_details = nlohmann::json::object();
+    }
+
     nlohmann::json event = {
         {"jsonrpc", "2.0"},
         {"method", "notifications/x64dbg/stepped"},
@@ -117,6 +316,13 @@ void c_mcp_events::on_stepped(PLUG_CB_STEPPED* /*info*/) {
 }
 
 void c_mcp_events::on_stop_debug(PLUG_CB_STOPDEBUG* /*info*/) {
+    m_last_was_breakpoint = false;
+    {
+        std::lock_guard lock(m_pause_mutex);
+        m_pause_reason_type.clear();
+        m_pause_reason_details = nlohmann::json{};
+    }
+
     nlohmann::json event = {
         {"jsonrpc", "2.0"},
         {"method", "notifications/x64dbg/stopped"},
@@ -126,10 +332,16 @@ void c_mcp_events::on_stop_debug(PLUG_CB_STOPDEBUG* /*info*/) {
 }
 
 void c_mcp_events::on_create_process(PLUG_CB_CREATEPROCESS* info) {
-    // Clear crash record from previous session
+    m_last_was_breakpoint = false;
+    // Clear per-session state from any previous debug session
     {
         std::lock_guard lock(m_crash_mutex);
         m_last_crash = s_crash_record{};
+    }
+    {
+        std::lock_guard lock(m_pause_mutex);
+        m_pause_reason_type.clear();
+        m_pause_reason_details = nlohmann::json{};
     }
 
     if (!info) return;
@@ -145,6 +357,7 @@ void c_mcp_events::on_create_process(PLUG_CB_CREATEPROCESS* info) {
 }
 
 void c_mcp_events::on_exit_process(PLUG_CB_EXITPROCESS* info) {
+    m_last_was_breakpoint = false;
     if (!info) return;
 
     nlohmann::json params = {
@@ -170,6 +383,7 @@ void c_mcp_events::on_exit_process(PLUG_CB_EXITPROCESS* info) {
 }
 
 void c_mcp_events::on_load_dll(PLUG_CB_LOADDLL* info) {
+    m_last_was_breakpoint = false;
     if (!info) return;
     nlohmann::json event = {
         {"jsonrpc", "2.0"},
@@ -183,6 +397,7 @@ void c_mcp_events::on_load_dll(PLUG_CB_LOADDLL* info) {
 }
 
 void c_mcp_events::on_unload_dll(PLUG_CB_UNLOADDLL* info) {
+    m_last_was_breakpoint = false;
     if (!info) return;
     nlohmann::json event = {
         {"jsonrpc", "2.0"},
@@ -192,6 +407,22 @@ void c_mcp_events::on_unload_dll(PLUG_CB_UNLOADDLL* info) {
         }}
     };
     enqueue(std::move(event));
+}
+
+void c_mcp_events::on_create_thread(PLUG_CB_CREATETHREAD* /*info*/) {
+    // Defensive: debuggee-created threads invalidate any stale pending. Note
+    // that x64dbg's own `pause` command does NOT go through CreateRemoteThread
+    // (it uses SuspendThread + SetBPX + ResumeThread and bypasses CB_CREATETHREAD),
+    // so this handler does not fix manual-pause misattribution — the
+    // cip + thread-cycles validation in on_breakpoint/on_pause does.
+    m_last_was_breakpoint = false;
+}
+
+void c_mcp_events::on_resume_debug(PLUG_CB_RESUMEDEBUG* /*info*/) {
+    // Defensive: clears pending on any user-initiated resume from a paused
+    // state (e.g., run/step commands). Does not fire between a skipped BP
+    // and the next pause, so it is not the load-bearing defense.
+    m_last_was_breakpoint = false;
 }
 
 // ============================================================================
@@ -344,6 +575,18 @@ nlohmann::json c_mcp_events::get_last_crash_unlocked() const {
         };
     }
 
+    return result;
+}
+
+nlohmann::json c_mcp_events::get_pause_reason() const {
+    std::lock_guard lock(m_pause_mutex);
+    if (m_pause_reason_type.empty()) {
+        return {{"reason", "unknown"}};
+    }
+    nlohmann::json result = {{"reason", m_pause_reason_type}};
+    if (!m_pause_reason_details.empty()) {
+        result[m_pause_reason_type] = m_pause_reason_details;
+    }
     return result;
 }
 

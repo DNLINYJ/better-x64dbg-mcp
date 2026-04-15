@@ -69,9 +69,15 @@ public:
     void on_exit_process(PLUG_CB_EXITPROCESS* info);
     void on_load_dll(PLUG_CB_LOADDLL* info);
     void on_unload_dll(PLUG_CB_UNLOADDLL* info);
+    void on_create_thread(PLUG_CB_CREATETHREAD* info);
+    void on_resume_debug(PLUG_CB_RESUMEDEBUG* info);
 
     // Crash record access
     nlohmann::json get_last_crash() const;
+
+    // Pause reason access (call when state is "paused")
+    // Returns {"reason": "<type>", "<type>": {...details...}} or {"reason": "unknown"}
+    nlohmann::json get_pause_reason() const;
 
 private:
     c_mcp_session* m_session_mgr = nullptr;
@@ -84,6 +90,54 @@ private:
 
     mutable std::mutex m_crash_mutex;
     s_crash_record m_last_crash;
+
+    // Pause reason — written from debug thread callbacks, read from HTTP thread.
+    mutable std::mutex m_pause_mutex;
+    std::string    m_pause_reason_type;     // "breakpoint" | "step" | "exception" | "unknown"
+    nlohmann::json m_pause_reason_details;  // type-specific fields, may be empty
+
+    // Breakpoint pending state — debug-thread-only (all plugin callbacks run sequentially
+    // on the debug thread, so no mutex is needed between these fields).
+    //
+    // Populated on every CB_BREAKPOINT (refreshed on each hit, so the latest hit is
+    // what on_pause sees) and consumed or rejected as stale by the next on_pause().
+    // Trust requires ALL of:
+    //
+    //   1. m_last_was_breakpoint: some CB_BREAKPOINT fired since the last clear.
+    //
+    //   2. Empty commandText: some commands (loadlib, pause, others) fire nested
+    //      CB_PAUSEDEBUG calls during commandText execution, and cip+cycles can
+    //      only prove "the original thread did not run past the BP", not "this
+    //      CB_PAUSEDEBUG is the BP's real pause rather than a command-triggered
+    //      nested one". Rejecting commandText BPs avoids misattributing those.
+    //
+    //   3. m_pending_cip == cip: a real CB_BREAKPOINT→CB_PAUSEDEBUG pair has no
+    //      execution between so CIP is unchanged; a skipped BP advances CIP past
+    //      the trigger via x64dbg's restoration single-step.
+    //
+    //   4. m_pending_thread_id matches AND m_pending_thread_cycles == current cycles:
+    //      the debuggee thread has not executed since CB_BREAKPOINT. Cycles
+    //      (QueryThreadCycleTime) has nanosecond-scale granularity and advances
+    //      only when the thread runs, so this reliably separates "real BP → pause
+    //      with thread suspended the entire time" from "skipped BP → thread ran
+    //      → later pause". Because both cip and cycles are refreshed on every
+    //      CB_BREAKPOINT, a real pause after N condition=false skips still
+    //      matches the last refreshed snapshot.
+    //
+    // Rejection reports the pause as "unknown". False positives (unrelated or
+    // nested pause misreported as breakpoint) are worse than false negatives,
+    // so we reject whenever any invariant fails.
+    BRIDGEBP m_pending_bp{};
+    duint    m_pending_cip = 0;
+    DWORD    m_pending_thread_id = 0;
+    ULONG64  m_pending_thread_cycles = 0;
+    bool     m_last_was_breakpoint = false;
+    // Log text evaluated at CB_BREAKPOINT time, matching x64dbg's actual log
+    // semantics: format before commandText runs, so commandText-induced state
+    // changes don't affect the captured text; treat logCondition eval failure
+    // as force-log (x64dbg's behavior per debugger.cpp:934-1046). Either
+    // {"log": "..."} or {"log_raw": "..."} or empty object.
+    nlohmann::json m_pending_log_fields;
 
     void push_loop();
     void enqueue(nlohmann::json event);

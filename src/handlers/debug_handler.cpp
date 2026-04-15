@@ -108,6 +108,7 @@ nlohmann::json state() {
         if (!mod.empty()) data["module"] = mod;
         auto label = bridge.get_label_at(cip);
         if (!label.empty()) data["label"] = label;
+        data.update(get_events().get_pause_reason());
     }
     return data;
 }

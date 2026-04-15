@@ -267,3 +267,11 @@ PLUG_EXPORT void CBLOADDLL(CBTYPE, void* info) {
 PLUG_EXPORT void CBUNLOADDLL(CBTYPE, void* info) {
     g_events.on_unload_dll(static_cast<PLUG_CB_UNLOADDLL*>(info));
 }
+
+PLUG_EXPORT void CBCREATETHREAD(CBTYPE, void* info) {
+    g_events.on_create_thread(static_cast<PLUG_CB_CREATETHREAD*>(info));
+}
+
+PLUG_EXPORT void CBRESUMEDEBUG(CBTYPE, void* info) {
+    g_events.on_resume_debug(static_cast<PLUG_CB_RESUMEDEBUG*>(info));
+}
